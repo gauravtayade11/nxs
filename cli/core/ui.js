@@ -46,7 +46,15 @@ export const TOOL_ICONS = {
 // Normalize a field that the AI may return as string, array, or object
 function toStr(val) {
   if (typeof val === 'string') return val;
-  if (Array.isArray(val))     return val.map((v, i) => `${i + 1}. ${v}`).join('\n');
+  if (Array.isArray(val)) {
+    // Filter out bare numbers (AI sometimes returns [0, "step", 0, "step"])
+    const items = val.filter((v) => v !== null && v !== undefined && typeof v !== 'number' && String(v).trim() !== '');
+    return items.map((v, i) => {
+      if (Array.isArray(v)) return `${i + 1}. ${toStr(v)}`;
+      if (v && typeof v === 'object') return `${i + 1}. ${Object.values(v).join(' ')}`;
+      return `${i + 1}. ${v}`;
+    }).join('\n');
+  }
   if (val && typeof val === 'object') return Object.entries(val).map(([k, v]) => `${k}: ${v}`).join('\n');
   return String(val ?? '');
 }
@@ -73,11 +81,13 @@ export function printResult(result) {
   );
 
   console.log(`\n${chalk.dim('💻')} ${chalk.bold('REMEDIATION COMMANDS')}\n`);
-  console.log(chalk.dim('  ┌─ shell ─────────────────────────────────┐'));
-  toStr(result.commands).split('\n').forEach((c) =>
-    console.log(chalk.dim('  │ ') + chalk.hex('#00e5ff')(c.padEnd(42)) + chalk.dim('│'))
+  const cmds = toStr(result.commands).split('\n').filter(Boolean);
+  const boxW = Math.min(Math.max(...cmds.map((c) => c.length), 40) + 2, 100);
+  console.log(chalk.dim('  ┌─ shell ' + '─'.repeat(boxW - 8) + '┐'));
+  cmds.forEach((c) =>
+    console.log(chalk.dim('  │ ') + chalk.hex('#00e5ff')(c.padEnd(boxW - 1)) + chalk.dim('│'))
   );
-  console.log(chalk.dim('  └─────────────────────────────────────────┘'));
+  console.log(chalk.dim('  └' + '─'.repeat(boxW + 1) + '┘'));
   console.log('\n' + hr() + '\n');
 }
 

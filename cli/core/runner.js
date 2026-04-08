@@ -2,19 +2,24 @@
  * Shared command runner — handles input, analysis, chat loop.
  * Each tool module calls this with its own systemPrompt + mockFn.
  */
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { createInterface }          from 'readline';
 import { resolve }                  from 'path';
 import chalk                        from 'chalk';
 import ora                          from 'ora';
 import { analyze, chat }            from './ai.js';
 import { addHistory }               from './config.js';
-import { printResult, readStdin, prompt, hr } from './ui.js';
+import { printResult, readStdin, prompt } from './ui.js';
+import { redact, warnIfSensitive }  from './redact.js';
 
 export async function runAnalyze(toolModule, systemPrompt, mockFn, file, opts) {
   let logText = '';
 
-  if (opts.stdin || (!process.stdin.isTTY && !opts.interactive && !file)) {
+  if (opts._injected) {
+    logText = opts._injected;
+    if (!opts.json) console.log(chalk.dim(`  Input: auto-fetched (${logText.length} chars)\n`));
+
+  } else if (opts.stdin || (!process.stdin.isTTY && !opts.interactive && !file)) {
     logText = await readStdin();
     if (!logText.trim()) { console.error(chalk.red('  No input from stdin.')); process.exit(1); }
     if (!opts.json) console.log(chalk.dim(`  Input: stdin (${logText.length} chars)\n`));
@@ -40,6 +45,23 @@ export async function runAnalyze(toolModule, systemPrompt, mockFn, file, opts) {
     process.exit(1);
   }
 
+  // Passive security warning — shown even without --redact
+  const warnings = warnIfSensitive(logText);
+  if (warnings.length > 0 && !opts.json) {
+    console.log(chalk.yellow('  ⚠  Security notice:'));
+    warnings.forEach((w) => console.log(chalk.yellow(`     · ${w}`)));
+    console.log(chalk.dim('     Use --redact to scrub sensitive values before sending to AI.\n'));
+  }
+
+  // Redact if requested
+  if (opts.redact) {
+    const { redacted, count, types } = redact(logText);
+    logText = redacted;
+    if (!opts.json && count > 0) {
+      console.log(chalk.green(`  ✓ Redacted ${count} sensitive pattern type(s): ${types.join(', ')}\n`));
+    }
+  }
+
   if (opts.json) {
     const result = await analyze(logText, systemPrompt, mockFn);
     console.log(JSON.stringify(result, null, 2));
@@ -58,6 +80,19 @@ export async function runAnalyze(toolModule, systemPrompt, mockFn, file, opts) {
 
   addHistory(toolModule, logText, result);
   printResult(result);
+
+  // --output: save full analysis to a markdown file
+  if (opts.output) {
+    const md = buildMarkdown(result, logText);
+    writeFileSync(opts.output, md, 'utf8');
+    console.log(chalk.green(`  ✓ Analysis saved to ${opts.output}\n`));
+  }
+
+  // --fail-on: exit 1 if severity matches
+  if (opts.failOn && result.severity === opts.failOn) {
+    console.log(chalk.red(`  ✗ Severity is '${result.severity}' — exiting with code 1 (--fail-on ${opts.failOn})\n`));
+    process.exit(1);
+  }
 
   if (opts.chat !== false) {
     await runChatLoop(logText, result);
@@ -100,6 +135,46 @@ export async function runHistory(toolModule, opts) {
   });
 
   console.log('\n' + hr() + '\n');
+}
+
+function buildMarkdown(result, logText) {
+  const ts = new Date().toISOString();
+  const toMd = (v) => {
+    if (typeof v === 'string') return v;
+    if (Array.isArray(v)) return v.filter((x) => x && typeof x !== 'number').map((x, i) => `${i + 1}. ${x}`).join('\n');
+    return String(v ?? '');
+  };
+  return `# nxs Analysis — ${(result.tool ?? 'unknown').toUpperCase()}
+
+**Date:** ${ts}
+**Severity:** ${result.severity ?? 'unknown'}
+${result.resource ? `**Resource:** ${result.resource}  ` : ''}
+${result.namespace && result.namespace !== 'unknown' ? `**Namespace:** ${result.namespace}  ` : ''}
+
+## Summary
+
+${toMd(result.summary)}
+
+## Root Cause
+
+${toMd(result.rootCause)}
+
+## Fix Steps
+
+${toMd(result.fixSteps)}
+
+## Remediation Commands
+
+\`\`\`bash
+${toMd(result.commands)}
+\`\`\`
+
+## Log Input (excerpt)
+
+\`\`\`
+${logText.slice(0, 2000)}${logText.length > 2000 ? '\n... (truncated)' : ''}
+\`\`\`
+`;
 }
 
 async function runChatLoop(logText, result) {

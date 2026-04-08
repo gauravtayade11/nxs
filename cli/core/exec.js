@@ -1,5 +1,5 @@
-import { execSync, exec } from 'child_process';
-import { promisify } from 'util';
+import { exec } from 'node:child_process';
+import { promisify } from 'node:util';
 
 const execAsync = promisify(exec);
 
@@ -33,9 +33,11 @@ export async function hasBin(name) {
 export function parseTable(output) {
   const lines = output.split('\n').filter(Boolean);
   if (lines.length < 2) return [];
-  const headers = lines[0].trim().split(/\s{2,}/).map((h) => h.toLowerCase().replace(/[^a-z0-9]/g, '_'));
+  // Support both kubectl (multi-space) and helm (tab) column separators
+  const split = (line) => line.trim().split(/\t|\s{2,}/).map((v) => v.trim()).filter((_, i, a) => i < a.length);
+  const headers = split(lines[0]).map((h) => h.toLowerCase().replaceAll(/[^a-z0-9]/g, '_'));
   return lines.slice(1).map((line) => {
-    const cols = line.trim().split(/\s{2,}/);
+    const cols = split(line);
     const obj = {};
     headers.forEach((h, i) => { obj[h] = cols[i] ?? ''; });
     return obj;

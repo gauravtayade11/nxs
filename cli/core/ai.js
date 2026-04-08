@@ -60,7 +60,7 @@ export async function analyze(logText, systemPrompt, mockFn) {
     if (input.length > GROQ_MAX_CHARS) { input = input.slice(0, GROQ_MAX_CHARS); truncated = true; }
     const raw = await callGroq(systemPrompt, `Analyze this log:\n\n${input}`);
     const result = JSON.parse(raw);
-    if (truncated) result.summary = `[Truncated to ${GROQ_MAX_CHARS} chars] ${result.summary}`;
+    if (truncated) result._truncated = true;
     return result;
   }
 

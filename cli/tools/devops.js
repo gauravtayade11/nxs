@@ -1,7 +1,7 @@
 /**
  * nxs devops — CI/CD, Docker, Terraform, general pipeline errors
  */
-import { Command } from 'commander';
+import { readFileSync, existsSync, statSync } from 'node:fs';
 import chalk from 'chalk';
 import { printBanner, hr } from '../core/ui.js';
 import { runAnalyze, runHistory } from '../core/runner.js';
@@ -70,6 +70,9 @@ export function registerDevops(program) {
     .option('-i, --interactive', 'Paste log interactively')
     .option('-j, --json', 'Output as JSON')
     .option('--no-chat', 'Skip follow-up chat')
+    .option('--redact', 'Scrub secrets/tokens from log before sending to AI')
+    .option('-o, --output <file>', 'Save analysis to a markdown file')
+    .option('--fail-on <severity>', 'Exit code 1 if severity matches (critical|warning)')
     .addHelpText('after', `
 Examples:
   $ nxs devops analyze build.log
@@ -90,6 +93,64 @@ Examples:
     .action(async (opts) => {
       printBanner('CI/CD · Docker · Terraform debugger');
       await runHistory('devops', opts);
+    });
+
+  devops
+    .command('watch <file>')
+    .description('Tail a live log file and auto-analyze when errors appear')
+    .option('--no-chat', 'Skip follow-up chat after each analysis')
+    .option('--redact', 'Scrub secrets before sending to AI')
+    .option('-o, --output <file>', 'Append each analysis to a markdown file')
+    .option('--fail-on <severity>', 'Exit code 1 on first match of severity')
+    .addHelpText('after', `
+Examples:
+  $ nxs devops watch /var/log/app.log
+  $ nxs devops watch pipeline.log --no-chat
+  $ nxs devops watch deploy.log --fail-on critical`)
+    .action(async (file, opts) => {
+      printBanner('CI/CD · Docker · Terraform debugger');
+
+      if (!existsSync(file)) {
+        console.error(chalk.red(`  File not found: ${file}`));
+        process.exit(1);
+      }
+
+      let lastSize = statSync(file).size;
+      console.log(chalk.cyan(`  Watching ${chalk.white(file)} for errors — Ctrl+C to stop\n`));
+      console.log(chalk.dim('  Triggers on lines containing: error, fail, exception, fatal, panic\n'));
+
+      const ERROR_RE = /error|fail|exception|fatal|panic|traceback|stderr/i;
+      const DEBOUNCE_MS = 3000;
+      let buffer = '';
+      let debounceTimer = null;
+
+      const flush = async (chunk) => {
+        if (!opts.json) process.stdout.write(chalk.dim('  New errors detected — analyzing...\n'));
+        await runAnalyze('devops', SYSTEM_PROMPT, mockAnalyze, null, {
+          ...opts,
+          _injected: chunk,
+          chat: false,
+        });
+      };
+
+      setInterval(async () => {
+        const currentSize = statSync(file).size;
+        if (currentSize <= lastSize) return;
+
+        const newBytes = readFileSync(file).slice(lastSize);
+        lastSize = currentSize;
+        const newText = newBytes.toString('utf8');
+
+        if (!ERROR_RE.test(newText)) return;
+
+        buffer += newText;
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(async () => {
+          const chunk = buffer;
+          buffer = '';
+          await flush(chunk);
+        }, DEBOUNCE_MS);
+      }, 1000);
     });
 
   devops

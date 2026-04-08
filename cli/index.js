@@ -271,9 +271,9 @@ Examples:
   $ nxs history
   $ nxs history -n 5
   $ nxs history --clear`)
-  .action((opts) => {
+  .action(async (opts) => {
     if (opts.clear) {
-      const { saveHistory } = require('./core/config.js');
+      const { saveHistory } = await import('./core/config.js');
       saveHistory([]);
       console.log(chalk.green('  ✓ All history cleared.\n'));
       return;

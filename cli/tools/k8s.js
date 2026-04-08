@@ -4,6 +4,7 @@
 import chalk from 'chalk';
 import { printBanner, hr } from '../core/ui.js';
 import { runAnalyze, runHistory } from '../core/runner.js';
+import { run } from '../core/exec.js';
 
 const SYSTEM_PROMPT = `You are a Kubernetes expert (CKA/CKAD level). Analyze the provided Kubernetes log, event, or error output.
 Return a JSON object with exactly this structure:
@@ -85,16 +86,46 @@ export function registerK8s(program) {
     .description('Debug a Kubernetes error or pod log')
     .option('-s, --stdin', 'Read from stdin')
     .option('-i, --interactive', 'Paste log interactively')
+    .option('-p, --pod <name>', 'Pod name — auto-fetches logs + describe (no piping needed)')
+    .option('-n, --namespace <ns>', 'Namespace for --pod (default: default)')
     .option('-j, --json', 'Output as JSON')
     .option('--no-chat', 'Skip follow-up chat')
+    .option('--redact', 'Scrub secrets/tokens from log before sending to AI')
+    .option('-o, --output <file>', 'Save analysis to a markdown file')
+    .option('--fail-on <severity>', 'Exit code 1 if severity matches (critical|warning)')
     .addHelpText('after', `
 Examples:
   $ nxs k8s debug pod-error.log
+  $ nxs k8s debug --pod crash-demo -n nextsight-demo
   $ kubectl describe pod my-pod | nxs k8s debug --stdin
-  $ kubectl logs my-pod --previous | nxs k8s debug -s
-  $ kubectl get events | nxs k8s debug --stdin`)
+  $ kubectl logs my-pod --previous | nxs k8s debug -s`)
     .action(async (file, opts) => {
       if (!opts.json) printBanner('Kubernetes deep-dive debugger');
+
+      // --pod: auto-fetch logs + describe, no piping needed
+      if (opts.pod) {
+        const ns = opts.namespace ? `-n ${opts.namespace}` : '';
+        if (!opts.json) console.log(chalk.dim(`  Fetching logs + describe for pod: ${chalk.white(opts.pod)}\n`));
+        const [logsR, descR] = await Promise.all([
+          run(`kubectl logs ${opts.pod} ${ns} --previous 2>/dev/null || kubectl logs ${opts.pod} ${ns} 2>/dev/null`),
+          run(`kubectl describe pod ${opts.pod} ${ns} 2>/dev/null`),
+        ]);
+        const combined = [
+          logsR.stdout ? `=== LOGS ===\n${logsR.stdout}` : '',
+          descR.stdout ? `=== DESCRIBE ===\n${descR.stdout}` : '',
+        ].filter(Boolean).join('\n\n');
+
+        if (!combined.trim()) {
+          console.error(chalk.red(`  Pod '${opts.pod}' not found or kubectl not configured.`));
+          process.exit(1);
+        }
+        // Inject as stdin equivalent
+        opts.stdin = true;
+        process.stdin.destroy();
+        await runAnalyze('k8s', SYSTEM_PROMPT, mockAnalyze, null, { ...opts, _injected: combined });
+        return;
+      }
+
       await runAnalyze('k8s', SYSTEM_PROMPT, mockAnalyze, file, opts);
     });
 
