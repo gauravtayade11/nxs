@@ -4,7 +4,7 @@
 > Get root cause + fix steps in seconds — right in your terminal.
 
 ```bash
-npm install -g nxs-devops
+npm install -g nxs-cli
 nxs
 ```
 
@@ -27,7 +27,7 @@ Then you can ask follow-up questions in a chat.
 **Requirements:** Node.js 18+
 
 ```bash
-npm install -g nxs-devops
+npm install -g nxs-cli
 ```
 
 Optional (for live cluster features):

@@ -1,7 +1,7 @@
 {
-  "name": "nxs-devops",
+  "name": "nxs-cli",
   "version": "1.0.0",
-  "description": "AI-powered DevOps & Cloud debugger — analyze Kubernetes, Docker, CI/CD, AWS, GCP, Azure, Terraform errors instantly",
+  "description": "AI-powered DevOps intelligence CLI — debug Kubernetes, Docker, CI/CD, AWS, GCP, Azure, Terraform errors instantly from your terminal",
   "type": "module",
   "keywords": [
     "devops",
@@ -24,12 +24,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/gtayade/nextsight-devops.git"
+    "url": "https://github.com/gauravtayade11/nxs.git"
   },
-  "homepage": "https://github.com/gtayade/nextsight-devops#readme",
+  "homepage": "https://github.com/gauravtayade11/nxs#readme",
   "bin": {
-    "nxs": "./cli/index.js",
-    "devops-debug": "./cli/index.js"
+    "nxs": "./cli/index.js"
   },
   "scripts": {
     "dev": "vite",
