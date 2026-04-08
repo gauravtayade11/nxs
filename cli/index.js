@@ -10,6 +10,7 @@ import { printBanner, providerInfo, hr, prompt, VERSION } from './core/ui.js';
 import { registerDevops } from './tools/devops.js';
 import { registerCloud }  from './tools/cloud.js';
 import { registerK8s }    from './tools/k8s.js';
+import { registerSec }    from './tools/sec.js';
 import { registerStatus, registerK8sStatus, registerDevopsPipelines } from './tools/status.js';
 
 // Load .env then persisted config
@@ -30,6 +31,7 @@ program
 registerDevops(program);
 registerCloud(program);
 registerK8s(program);
+registerSec(program);
 registerStatus(program);
 
 // Wire status sub-commands into existing tools
@@ -87,6 +89,16 @@ program
         ],
       },
       {
+        name: 'nxs sec', color: chalk.hex('#ff4757'),
+        tagline: 'Security scans — Trivy · Grype · Snyk · OWASP',
+        features: [
+          ['scan <file/--stdin>',      'Analyze Trivy, Grype, Snyk, OWASP scan output'],
+          ['scan --image <name>',      'Scan a Docker image directly (requires trivy)'],
+          ['scan --pod <name>',        'Auto-detect pod image and scan it'],
+          ['severities',              'CVE severity reference card'],
+        ],
+      },
+      {
         name: 'nxs status', color: chalk.cyan,
         tagline: 'Live dashboard',
         features: [
@@ -120,6 +132,7 @@ program
       ['Debug Terraform apply',         'terraform apply 2>&1 | nxs devops analyze --stdin'],
       ['Watch pods live',               'nxs k8s pods --watch'],
       ['Full infra snapshot',           'nxs status'],
+      ['Scan image for CVEs',           'trivy image myapp:latest | nxs sec scan --stdin'],
     ];
 
     examples.forEach(([label, cmd]) => {
