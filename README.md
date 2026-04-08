@@ -1,223 +1,279 @@
-# ⚡ NextSight DevOps — MVP
+# ⚡ nxs — DevOps Intelligence CLI
 
-> AI-powered DevOps & Cloud debugger — Web App + CLI
+> AI-powered debugger for Kubernetes, Docker, CI/CD, AWS, GCP, Azure, and Terraform.
+> Get root cause + fix steps in seconds — right in your terminal.
 
----
-
-## What is this?
-
-A tool that takes your raw error logs (Kubernetes, Docker, CI/CD, AWS, GCP, Azure, Terraform) and instantly tells you:
-- What broke
-- Why it broke
-- How to fix it
-- Which commands to run
-
-Two interfaces — a web app you open in a browser, and a CLI you pipe logs into directly from the terminal.
-
----
-
-## Who is it for?
-
-| Role | How they use it |
-|---|---|
-| DevOps / Platform Engineer | Paste pipeline failures, get root cause + fix commands |
-| Cloud Engineer | Diagnose AWS AccessDenied, GCP IAM errors, Azure RBAC issues |
-| Backend Dev | Debug Kubernetes CrashLoopBackOff or ImagePullBackOff quickly |
-| SRE / On-call | Live cluster dashboard + one-liner to analyze failing pods |
-
----
-
-## Web App
-
-**Start:** `npm run dev` → http://localhost:5173
-
-### Features
-
-| Feature | What it does |
-|---|---|
-| **Paste or upload log** | Textarea + file upload (.log, .txt) |
-| **Example log buttons** | One-click: Kubernetes / Docker / Terraform / CI/CD sample errors |
-| **Clear button** | ✕ inside textarea, clears in one click |
-| **AI analysis** | Detects tool type, returns structured result |
-| **Summary tab** | 1-2 sentence plain-English error description |
-| **Root Cause tab** | Detailed numbered breakdown of why it failed |
-| **Fix Steps tab** | Step-by-step remediation actions |
-| **Commands tab** | Copy-paste shell commands with one-click copy |
-| **Ask AI tab** | Follow-up chat — ask anything about the error |
-| **Export** | Download full analysis as `.md` file |
-| **History sidebar** | Last 5 analyses, click to reload, clear all |
-| **Mobile support** | Sidebar becomes a slide-in drawer on small screens |
-| **Loading state** | Spinner while AI is working, error banner on failure |
-
-### AI Providers (web)
-
-| Provider | Key | Cost |
-|---|---|---|
-| Groq | `VITE_GROQ_API_KEY` | Free |
-| Anthropic Claude | `VITE_ANTHROPIC_API_KEY` | $5 free credits |
-| None | — | Demo/mock mode |
-
----
-
-## CLI
-
-**Install:** `npm link` → use `nxs` from anywhere
-
-### Tools
-
-#### `nxs devops` — CI/CD · Docker · Terraform
 ```bash
-nxs devops analyze error.log           # analyze a file
-nxs devops analyze --stdin             # pipe from any command
-nxs devops analyze --interactive       # paste manually
-nxs devops pipelines                   # GitHub Actions status
-nxs devops pipelines --watch           # auto-refresh every 30s
-nxs devops examples                    # sample error logs to test
+npm install -g nxs-devops
+nxs
 ```
 
-**Detects:** Docker build failures, npm install errors, Terraform misconfigs, GitHub Actions / Jenkins / GitLab CI failures
+---
+
+## What it does
+
+You paste or pipe a broken log. nxs tells you:
+- **What** broke (in plain English)
+- **Why** it broke (root cause, numbered)
+- **How** to fix it (step-by-step)
+- **Which commands** to run (copy-paste ready)
+
+Then you can ask follow-up questions in a chat.
 
 ---
 
-#### `nxs cloud` — AWS · GCP · Azure
+## Install
+
+**Requirements:** Node.js 18+
+
 ```bash
-nxs cloud diagnose error.log
-aws s3 ls 2>&1 | nxs cloud diagnose --stdin
-nxs cloud providers                    # list supported services
+npm install -g nxs-devops
 ```
 
-**Detects:** IAM permission errors, missing roles, API not enabled, RBAC issues, resource misconfigs
+Optional (for live cluster features):
+- `kubectl` — for `nxs k8s` and `nxs status`
+- `helm` — for `nxs status --only helm`
+- `gh` (GitHub CLI) — for `nxs devops pipelines`
 
 ---
 
-#### `nxs k8s` — Kubernetes
+## Quick start
+
+### 1. Set up your AI key (free)
+
 ```bash
-nxs k8s debug pod.log
+nxs config --setup
+```
+
+Get a free Groq key at [console.groq.com](https://console.groq.com) — no credit card needed.
+Or use Anthropic (`ANTHROPIC_API_KEY`). Or skip — it works in demo mode without any key.
+
+### 2. Analyze your first error
+
+```bash
+# From a file
+nxs devops analyze build.log
+
+# Pipe directly from any command
 kubectl logs my-pod --previous | nxs k8s debug --stdin
-nxs k8s status                         # nodes + pods + deployments
-nxs k8s status -n production           # filter by namespace
-nxs k8s pods                           # pod counts by status
-nxs k8s pods --watch                   # live refresh every 5s
-nxs k8s errors                         # quick reference card
+docker build . 2>&1 | nxs devops analyze --stdin
+terraform apply 2>&1 | nxs devops analyze --stdin
+aws s3 ls 2>&1 | nxs cloud diagnose --stdin
+
+# Debug a pod by name (no piping needed)
+nxs k8s debug --pod my-pod -n my-namespace
+
+# Try an example without a real error
+nxs devops examples
 ```
 
-**Detects:** ImagePullBackOff, CrashLoopBackOff, OOMKilled, Pending (scheduling), RBAC errors
+### 3. See your cluster live
+
+```bash
+nxs status
+nxs k8s pods --watch
+```
 
 ---
 
-#### `nxs status` — Live Dashboard
+## Tools
+
+### `nxs devops` — CI/CD · Docker · Terraform
+
 ```bash
-nxs status                             # full dashboard
-nxs status --only k8s                  # cluster only
-nxs status --only pipelines            # pipelines only
-nxs status --only helm                 # helm releases only
-nxs status -n production               # specific namespace
+nxs devops analyze <file>          # analyze a log file
+nxs devops analyze --stdin         # pipe from any command
+nxs devops analyze --interactive   # paste manually
+nxs devops watch <file>            # tail live log, auto-analyze on errors
+nxs devops pipelines               # GitHub Actions run status
+nxs devops pipelines --watch       # live refresh every 30s
+nxs devops examples                # sample logs to test with
+nxs devops history                 # past analyses
 ```
 
-**Shows:**
-- Nodes (Ready / NotReady count)
-- Pods (total, grouped by status, unhealthy highlighted)
-- Deployments (healthy vs degraded)
-- Recent Kubernetes warning events
-- GitHub Actions runs (active, recent, failed)
-- Helm releases (deployed / failed)
+**Detects:** Docker build failures, npm errors, Terraform misconfigs,
+GitHub Actions / Jenkins / GitLab CI failures
 
 ---
 
-### Global commands
+### `nxs cloud` — AWS · GCP · Azure
+
 ```bash
-nxs history                            # all past analyses
-nxs config --setup                     # interactive API key wizard
-nxs config --set GROQ_API_KEY=xxx      # set a key directly
-nxs config --get                       # show saved keys (masked)
+nxs cloud diagnose <file>
+nxs cloud diagnose --stdin
+nxs cloud providers                # list supported services
+nxs cloud history
 ```
 
-### Output flags (all analyze/diagnose/debug commands)
+**Detects:** IAM permission errors, missing roles, API not enabled,
+RBAC misconfigs, resource errors
+
+---
+
+### `nxs k8s` — Kubernetes
+
 ```bash
---no-chat          skip follow-up Q&A after analysis
---json / -j        output raw JSON (for scripting)
--n <namespace>     filter Kubernetes by namespace
+nxs k8s debug <file>
+nxs k8s debug --stdin
+nxs k8s debug --pod <name> -n <namespace>   # auto-fetch logs + describe
+nxs k8s status                     # nodes, pods, deployments
+nxs k8s status -n <namespace>      # filter by namespace
+nxs k8s pods                       # pod count by status
+nxs k8s pods --watch               # live refresh every 5s
+nxs k8s errors                     # quick reference card
+nxs k8s history
 ```
 
-### AI Providers (CLI)
+**Detects:** ImagePullBackOff, CrashLoopBackOff, OOMKilled,
+Pending (scheduling), RBAC errors
 
-| Provider | Key (in .env or `nxs config --set`) | Cost |
-|---|---|---|
-| Groq | `GROQ_API_KEY` | Free |
-| Anthropic Claude | `ANTHROPIC_API_KEY` | $5 free credits |
-| None | — | Demo/mock mode |
+---
 
-Keys are saved to `~/.nxs/config.json` — work from any directory.
-History saved to `~/.nxs/history.json` — last 50 entries.
+### `nxs status` — Live Dashboard
+
+```bash
+nxs status                         # full dashboard
+nxs status --only k8s              # cluster only
+nxs status --only pipelines        # GitHub Actions only
+nxs status --only helm             # Helm releases only
+nxs status -n <namespace>          # filter namespace
+```
+
+**Shows:** Node health, pod counts by status, deployment health,
+recent warning events, GitHub Actions runs, Helm release status
+
+---
+
+## Flags (work on all analyze/debug/diagnose commands)
+
+```bash
+--no-chat               Skip follow-up chat after analysis
+-j, --json              Raw JSON output (for scripting/CI)
+-o, --output <file>     Save full analysis as a markdown report
+--fail-on <severity>    Exit code 1 if severity matches (critical|warning)
+--redact                Scrub secrets/tokens before sending to AI
+-s, --stdin             Read from stdin
+-i, --interactive       Paste log interactively
+```
 
 ---
 
 ## Real-world one-liners
 
 ```bash
-# Debug a crashing pod instantly
-kubectl logs my-pod --previous | nxs k8s debug --stdin
+# Debug any pod instantly — no piping needed
+nxs k8s debug --pod crash-demo -n production
 
-# Debug a failed Docker build
-docker build . 2>&1 | nxs devops analyze --stdin
+# Gate a CI pipeline — fail the build if analysis is critical
+nxs devops analyze build.log --no-chat --fail-on critical
+
+# Save analysis as a report for your ticket
+kubectl describe pod my-pod | nxs k8s debug --stdin --output report.md
+
+# Watch a live deploy log, get alerted on first error
+nxs devops watch /var/log/deploy.log --no-chat
+
+# Debug AWS error without leaking credentials
+aws s3 ls 2>&1 | nxs cloud diagnose --stdin --redact
 
 # Debug a failed GitHub Actions run
 gh run view <run-id> --log-failed | nxs devops analyze --stdin
 
-# Debug an AWS error
-aws s3 cp file.txt s3://my-bucket/ 2>&1 | nxs cloud diagnose --stdin
-
-# Debug Terraform apply failure
-terraform apply 2>&1 | nxs devops analyze --stdin
-
-# Watch pods live
+# Live pod dashboard
 nxs k8s pods --watch
 
-# Full infrastructure snapshot
+# Full infra snapshot
 nxs status
 ```
+
+---
+
+## Global commands
+
+```bash
+nxs                        # welcome screen + tool list
+nxs info                   # full feature overview
+nxs config --setup         # interactive API key wizard
+nxs config --set KEY=value # set a key directly
+nxs config --get           # show saved keys (masked)
+nxs history                # all past analyses (all tools)
+nxs history -n 5           # limit entries
+nxs history --clear        # clear all history
+nxs <tool> --help          # help for any tool
+```
+
+---
+
+## AI providers
+
+| Provider | Key | Cost | How to get |
+|---|---|---|---|
+| **Groq** (recommended) | `GROQ_API_KEY` | Free | [console.groq.com](https://console.groq.com) |
+| Anthropic Claude | `ANTHROPIC_API_KEY` | $5 free credits | [console.anthropic.com](https://console.anthropic.com) |
+| None | — | Free | Demo/mock mode — works without any key |
+
+Set via wizard:
+```bash
+nxs config --setup
+```
+
+Or set directly:
+```bash
+nxs config --set GROQ_API_KEY=gsk_...
+```
+
+Keys saved to `~/.nxs/config.json` — work from any directory.
+History saved to `~/.nxs/history.json` — last 50 entries per tool.
+
+---
+
+## Web app
+
+A browser interface is also included for teams who prefer a UI.
+
+```bash
+git clone https://github.com/gauravtayade11/nxs
+cd nxs
+npm install
+cp .env.example .env       # add your API keys
+npm run dev                # http://localhost:5173
+```
+
+Web app features: paste or upload logs, tabbed analysis output (Summary / Root Cause / Fix Steps / Commands / Ask AI), export as markdown, history sidebar, mobile support.
 
 ---
 
 ## Project structure
 
 ```
-├── src/                     Web app (React + Vite)
-│   ├── components/
-│   │   ├── Header.jsx
-│   │   ├── LogInput.jsx       textarea, file upload, example buttons
-│   │   ├── AnalysisOutput.jsx tabs: summary/cause/fix/commands/chat
-│   │   └── HistorySidebar.jsx last 5 analyses
-│   └── utils/
-│       ├── ai.js              Groq + Anthropic + mock fallback
-│       └── exampleLogs.js     sample error logs
-│
-└── cli/                     CLI (Node.js)
-    ├── index.js               nxs entry point + router
-    ├── core/
-    │   ├── ai.js              shared AI calls
-    │   ├── config.js          ~/.nxs/config.json + history.json
-    │   ├── exec.js            shell command runner
-    │   ├── runner.js          shared analyze + chat loop
-    │   └── ui.js              banner, colors, printResult
-    └── tools/
-        ├── devops.js          nxs devops
-        ├── cloud.js           nxs cloud
-        ├── k8s.js             nxs k8s
-        └── status.js          nxs status + k8s pods/status + devops pipelines
+cli/
+  index.js              entry point + command routing
+  core/
+    ai.js               AI provider logic (Groq → Anthropic → Mock)
+    config.js           ~/.nxs/ config + history
+    exec.js             shell command runner (kubectl, helm, gh)
+    redact.js           secrets scrubber
+    runner.js           analyze / watch / history orchestration
+    ui.js               terminal output formatting
+  tools/
+    devops.js           nxs devops
+    cloud.js            nxs cloud
+    k8s.js              nxs k8s
+    status.js           nxs status + live dashboards
+
+src/                    web app (React + Vite)
+  components/
+    LogInput.jsx        textarea, file upload, example buttons
+    AnalysisOutput.jsx  tabs: summary / root cause / fix / commands / chat
+    HistorySidebar.jsx  last 5 analyses
+    Header.jsx
+  utils/
+    ai.js               Groq + Anthropic + mock (browser)
+    exampleLogs.js      sample logs
 ```
 
 ---
 
-## What's not built yet
+## License
 
-| Feature | Value |
-|---|---|
-| `nxs devops watch <file>` | Tail a live log, auto-analyze on error |
-| Slack / webhook alert | Post analysis result to Slack after CI failure |
-| `nxs devops scan <dir>` | Scan a folder of `.log` files, summarize all |
-| `--output report.md` | Save result to file directly |
-| Severity filter | `nxs history --severity critical` |
-| `--fail-on critical` | Exit code 1 in CI when severity is critical |
-| Security tool (`nxs sec`) | Trivy/Grype scan output analysis |
-| Network tool (`nxs net`) | DNS, connectivity, cert expiry diagnosis |
+MIT — free to use, modify, and distribute.
