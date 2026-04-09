@@ -19,6 +19,11 @@ import { registerWatch }   from './tools/watch.js';
 import { registerServe }   from './tools/serve.js';
 import { registerRbac }    from './tools/rbac.js';
 import { registerStatus, registerK8sStatus, registerDevopsPipelines } from './tools/status.js';
+import { registerNoise }     from './tools/noise.js';
+import { registerBlame }     from './tools/blame.js';
+import { registerPredict }   from './tools/predict.js';
+import { registerIncident }  from './tools/incident.js';
+import { registerAutopilot } from './tools/autopilot.js';
 
 // Load .env then persisted config (quiet: true suppresses dotenv v17 promo output)
 config({ path: resolve(process.cwd(), '.env'), quiet: true });
@@ -47,6 +52,11 @@ registerWatch(program);
 registerServe(program);
 registerRbac(program);
 registerStatus(program);
+registerNoise(program);
+registerBlame(program);
+registerPredict(program);
+registerIncident(program);
+registerAutopilot(program);
 
 // Wire status sub-commands into existing tools
 const k8sCmd     = program.commands.find((c) => c.name() === 'k8s');
@@ -664,6 +674,36 @@ if (process.argv.slice(2).length === 0) {
       color: chalk.cyan,
       desc: 'Live dashboard — pods, pipelines, helm releases',
       cmds: ['', '-n <namespace>', '--only k8s', '--only pipelines'],
+    },
+    {
+      name: 'autopilot',
+      color: chalk.hex('#00b894'),
+      desc: 'Self-healing — watch cluster and auto-fix issues',
+      cmds: ['-n <namespace>', '--auto', '--dry-run', '--once'],
+    },
+    {
+      name: 'predict',
+      color: chalk.hex('#fd79a8'),
+      desc: 'Predict OOMKills, disk exhaustion before they happen',
+      cmds: ['-n <namespace>', '--threshold 80', '--ai'],
+    },
+    {
+      name: 'blame',
+      color: chalk.hex('#fdcb6e'),
+      desc: 'Correlate what changed before a breakage',
+      cmds: ['--since 1h', '--since 30m -n production', '--no-ai'],
+    },
+    {
+      name: 'noise',
+      color: chalk.hex('#636e72'),
+      desc: 'Identify noisy alerts and reduce alert fatigue',
+      cmds: ['', '--alertmanager http://localhost:9093', '--days 30 --ai'],
+    },
+    {
+      name: 'incident',
+      color: chalk.hex('#e17055'),
+      desc: 'Full incident commander — start, track, postmortem',
+      cmds: ['start --title "..." --severity critical', 'update <id> --note "..."', 'close <id> --resolution "..."', 'postmortem <id>'],
     },
   ];
 
