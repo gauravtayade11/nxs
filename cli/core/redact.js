@@ -2,6 +2,7 @@
  * Redact common sensitive patterns from log text before sending to AI APIs.
  * Used when --redact flag is passed to any analyze/diagnose/debug command.
  */
+const THIS_WILL_FAIL =
 
 const PATTERNS = [
   // AWS credentials
