@@ -351,8 +351,13 @@ export function registerServe(program) {
     .option('-p, --port <n>', 'Port to listen on (default: 4000)', '4000')
     .option('--host <host>', 'Host to bind to (default: 0.0.0.0)', '0.0.0.0')
     .addHelpText('after', `
+Auth:
+  Set NXS_API_KEY env var to require X-Api-Key header on all requests.
+  /health and /webhook/* are always public.
+  curl example: curl -H "X-Api-Key: $NXS_API_KEY" http://localhost:4000/analyze
+
 Endpoints:
-  GET  /health                   Health check
+  GET  /health                   Health check (no auth)
   GET  /info                     Version, tools, history count
   POST /analyze                  Analyze a log  { tool, log }
   GET  /history                  Past analyses  ?tool=k8s&limit=20
@@ -402,6 +407,18 @@ Alertmanager config:
         const path = req.url.split('?')[0];
         const method = req.method;
 
+        // Auth check — skip for /health and webhooks (they use their own secrets)
+        const apiKey = process.env.NXS_API_KEY;
+        const publicPaths = ['/health', '/webhook/alertmanager', '/webhook/github'];
+        if (apiKey && !publicPaths.includes(path)) {
+          const provided = req.headers['x-api-key'] ?? req.headers['authorization']?.replace(/^Bearer\s+/i, '');
+          if (provided !== apiKey) {
+            send(res, 401, { error: 'Unauthorized. Provide your NXS_API_KEY via X-Api-Key header.' });
+            log(method, req.url, 401, Date.now() - t0);
+            return;
+          }
+        }
+
         try {
           if (method === 'GET'    && path === '/health')              { handleHealth(req, res); }
           else if (method === 'GET'    && path === '/info')           { handleInfo(req, res); }
@@ -437,12 +454,18 @@ Alertmanager config:
           const col = { GET: chalk.green, POST: chalk.yellow, DELETE: chalk.red }[m] ?? chalk.white;
           console.log(`  ${col(m.padEnd(7))} ${chalk.cyan(p.padEnd(30))} ${chalk.dim(d)}`);
         });
-        if (process.env.SLACK_WEBHOOK_URL) {
-          console.log(chalk.green('\n  ✓ Slack webhook configured\n'));
+        console.log();
+        if (process.env.NXS_API_KEY) {
+          console.log(chalk.green('  ✓ Auth enabled  ') + chalk.dim('(X-Api-Key header required)'));
         } else {
-          console.log(chalk.dim('\n  Tip: set SLACK_WEBHOOK_URL to auto-notify on alertmanager events\n'));
+          console.log(chalk.yellow('  ⚠ No auth  ') + chalk.dim('Set NXS_API_KEY to protect the API'));
         }
-        console.log(chalk.dim('  Press Ctrl+C to stop\n'));
+        if (process.env.SLACK_WEBHOOK_URL) {
+          console.log(chalk.green('  ✓ Slack webhook configured'));
+        } else {
+          console.log(chalk.dim('  Tip: set SLACK_WEBHOOK_URL to auto-notify on alertmanager events'));
+        }
+        console.log(chalk.dim('\n  Press Ctrl+C to stop\n'));
       });
 
       process.once('SIGINT', () => {
