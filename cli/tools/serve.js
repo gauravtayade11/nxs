@@ -334,6 +334,7 @@ async function postSlack(result, source, webhookUrl, runUrl = null) {
           { type: 'section', text: { type: 'mrkdwn', text: `*Root Cause*\n${String(result.rootCause ?? '').slice(0, 500)}` } },
           ...(result.commands ? [{ type: 'section', text: { type: 'mrkdwn', text: `*Fix Commands*\n\`\`\`${String(result.commands).slice(0, 400)}\`\`\`` } }] : []),
           ...(runUrl ? [{ type: 'section', text: { type: 'mrkdwn', text: `*Run URL*\n${runUrl}` } }] : []),
+          ...(result._mock ? [{ type: 'context', elements: [{ type: 'mrkdwn', text: `⚠ No AI key — showing extracted log details. Add GROQ_API_KEY for full diagnosis.` } ] }] : []),
           { type: 'context', elements: [{ type: 'mrkdwn', text: `nxs serve · ${new Date().toISOString()}` }] },
         ],
       }],

@@ -198,6 +198,7 @@ async function notifySlack(result, toolModule, webhookUrl) {
           type: 'section',
           text: { type: 'mrkdwn', text: `*Fix Commands*\n\`\`\`${String(result.commands).slice(0, 400)}\`\`\`` },
         }] : []),
+        ...(result._mock ? [{ type: 'context', elements: [{ type: 'mrkdwn', text: `⚠ No AI key — showing extracted log details. Add GROQ_API_KEY for full diagnosis.` }] }] : []),
         { type: 'context', elements: [{ type: 'mrkdwn', text: `nxs CLI · ${new Date().toISOString()}` }] },
       ],
     }],

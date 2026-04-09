@@ -78,11 +78,62 @@ const MOCK = {
 
 function mockAnalyze(logText) {
   const lower = logText.toLowerCase();
-  if (lower.includes('github') || lower.includes('::error::') || lower.includes('##[error]') || lower.includes('actions/')) return MOCK['github-actions'];
-  if (lower.includes('gitlab') || lower.includes('gitlab-runner') || lower.includes('running with gitlab')) return MOCK['gitlab-ci'];
-  if (lower.includes('jenkins') || lower.includes('build failed') || lower.includes('hudson.')) return MOCK.jenkins;
-  if (lower.includes('circleci') || lower.includes('====>>') || lower.includes('circleci-agent')) return MOCK.circleci;
-  return MOCK['github-actions'];
+
+  // Detect platform
+  let tool = 'github-actions';
+  if (lower.includes('gitlab-runner') || lower.includes('running with gitlab')) tool = 'gitlab-ci';
+  else if (lower.includes('build failed') || lower.includes('hudson.')) tool = 'jenkins';
+  else if (lower.includes('circleci-agent') || lower.includes('====>>')) tool = 'circleci';
+
+  // ── Extract real details from the log text ──────────────────────────────────
+
+  // Failed job/step
+  const jobMatch = logText.match(/X\s+(.+?)\s+in\s+\d+s/) ||
+                   logText.match(/FAILED:\s*(.+)/) ||
+                   logText.match(/error in step[:\s]+(.+)/i);
+  const failedJob = jobMatch?.[1]?.trim() ?? 'unknown step';
+
+  // Annotation / error lines
+  const annotations = [];
+  for (const line of logText.split('\n')) {
+    if (/^X /.test(line) && !/^X (main|.*CI)/.test(line) && !/^X .* in \d+s/.test(line)) {
+      annotations.push(line.replace(/^X\s+/, '').trim());
+    }
+    if (/##\[error\]|::error::|Error:|ERROR:/.test(line)) {
+      annotations.push(line.replace(/.*(?:##\[error\]|::error::)\s*/, '').trim());
+    }
+  }
+  const errorLines = [...new Set(annotations)].slice(0, 5);
+
+  // Workflow / branch / run URL from our injected header
+  const workflowMatch = logText.match(/Workflow:\s*(.+)/);
+  const branchMatch   = logText.match(/Branch:\s*(.+)/);
+  const urlMatch      = logText.match(/Run URL:\s*(https?:\/\/\S+)/);
+  const pipeline      = workflowMatch?.[1]?.trim() ?? 'unknown workflow';
+  const branch        = branchMatch?.[1]?.trim() ?? 'unknown branch';
+  const runUrl        = urlMatch?.[1]?.trim() ?? '';
+
+  // Build a relevant response from what we extracted
+  const errorSummary = errorLines.length > 0
+    ? errorLines.join('\n')
+    : 'Check the run logs for details.';
+
+  const commands = [
+    runUrl ? `# Open run:\n# ${runUrl}` : '',
+    `gh run view --log-failed`,
+    `npm run lint`,
+  ].filter(Boolean).join('\n');
+
+  return {
+    tool,
+    severity: 'critical',
+    pipeline,
+    step: failedJob,
+    summary: `Pipeline "${pipeline}" failed on branch "${branch}" at step: ${failedJob}. No AI key configured — showing extracted log details.`,
+    rootCause: errorSummary || 'Could not extract error details. Check the run URL.',
+    fixSteps: `1. Open the failed run: ${runUrl || 'see GitHub Actions'}\n2. Check the "${failedJob}" step logs\n3. Fix the issue and push again\n4. Add GROQ_API_KEY or ANTHROPIC_API_KEY secret for AI-powered diagnosis`,
+    commands,
+  };
 }
 
 export function registerCi(program) {
