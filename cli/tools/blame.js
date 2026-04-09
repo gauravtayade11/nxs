@@ -75,12 +75,16 @@ Examples:
       // ── Git log ──
       if (opts.git !== false) {
         const spinner = opts.json ? null : ora('Fetching git log…').start();
-        const gitR = await run(`git log --since="${sinceISO}" --oneline --no-merges 2>/dev/null`);
+        // Use ISO timestamp so we can sort commits alongside k8s events
+        const gitR = await run(`git log --since="${sinceISO}" --format="%H %aI %s" --no-merges 2>/dev/null`);
         spinner?.stop();
         if (gitR.stdout?.trim()) {
           gitR.stdout.trim().split('\n').forEach((line) => {
-            const [hash, ...rest] = line.split(' ');
-            timeline.push({ type: 'git', icon: '⊙', label: 'commit', hash, message: rest.join(' '), raw: line });
+            const parts = line.split(' ');
+            const hash  = parts[0];
+            const ts    = parts[1] ?? '';
+            const msg   = parts.slice(2).join(' ');
+            timeline.push({ type: 'git', icon: '⊙', label: 'commit', hash, message: msg, timestamp: ts });
           });
         }
       }
@@ -197,9 +201,14 @@ Examples:
       // ── AI analysis ──
       if (opts.ai !== false) {
         const spinner = ora('AI correlating timeline…').start();
-        const context = timeline.map((e) =>
-          `[${e.type}] ${e.timestamp ? fmtTime(e.timestamp) : ''} ${e.label}: ${e.message ?? ''} ${e.hash ?? ''} ${e.resource ?? ''}`
-        ).join('\n');
+        const context = [
+          `Analysis window: last ${opts.since ?? '1h'} (since ${since.toISOString()})`,
+          `IMPORTANT: Only correlate events that fall WITHIN this time window. Git commits outside the window are not related to the incident.`,
+          '',
+          ...timeline.map((e) =>
+            `[${e.type}] ${e.timestamp ? new Date(e.timestamp).toISOString() : 'no-timestamp'} ${e.label}: ${e.message ?? ''} ${e.hash ?? ''} ${e.resource ?? ''}`
+          ),
+        ].join('\n');
 
         try {
           const result = await analyze(context, SYSTEM_PROMPT, (text) => ({
