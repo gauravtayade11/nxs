@@ -176,7 +176,7 @@ export async function fetchPipelines(repo = null) {
     const repoFlag = repo ? `-R ${repo}` : '';
     const r = await run(`gh run list ${repoFlag} --limit 20 --json name,status,conclusion,headBranch,createdAt,url 2>/dev/null`);
     if (r.ok && r.stdout) {
-      try { return { runs: JSON.parse(r.stdout), source: 'gh', repo }; } catch {}
+      try { return { runs: JSON.parse(r.stdout), source: 'gh', repo }; } catch { /* ignore parse error */ }
     }
 
     // Detect repo from git remote
@@ -188,7 +188,7 @@ export async function fetchPipelines(repo = null) {
           const detectedRepo = match[1];
           const r2 = await run(`gh run list -R ${detectedRepo} --limit 20 --json name,status,conclusion,headBranch,createdAt,url 2>/dev/null`);
           if (r2.ok && r2.stdout) {
-            try { return { runs: JSON.parse(r2.stdout), source: 'gh', repo: detectedRepo }; } catch {}
+            try { return { runs: JSON.parse(r2.stdout), source: 'gh', repo: detectedRepo }; } catch { /* ignore parse error */ }
           }
         }
       }
@@ -207,7 +207,7 @@ export async function fetchPipelines(repo = null) {
       try {
         const data = JSON.parse(r.stdout);
         return { runs: data.workflow_runs ?? [], source: 'api', repo };
-      } catch {}
+      } catch { /* ignore parse error */ }
     }
   }
 

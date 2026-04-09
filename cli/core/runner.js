@@ -45,6 +45,7 @@ export async function runAnalyze(toolModule, systemPrompt, mockFn, file, opts) {
     }
     logText = readFileSync(fp, 'utf8');
     // Strip non-printable binary characters
+    // eslint-disable-next-line no-control-regex
     logText = logText.replace(/[\x00-\x08\x0E-\x1F\x7F]/g, '');
     if (!opts.json) console.log(chalk.dim(`  Input: ${fp} (${logText.length} chars)\n`));
 

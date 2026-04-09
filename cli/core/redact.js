@@ -31,7 +31,7 @@ const PATTERNS = [
   { label: 'GitHub token',      re: /\bghp_[A-Za-z0-9]{36}\b/g,                        sub: '[REDACTED-GITHUB-TOKEN]' },
   { label: 'npm token',         re: /\bnpm_[A-Za-z0-9]{36}\b/g,                        sub: '[REDACTED-NPM-TOKEN]' },
   { label: 'Groq API key',      re: /\bgsk_[A-Za-z0-9]{50,}\b/g,                       sub: '[REDACTED-GROQ-KEY]' },
-  { label: 'Anthropic key',     re: /\bsk-ant-[A-Za-z0-9\-]{50,}\b/g,                  sub: '[REDACTED-ANTHROPIC-KEY]' },
+  { label: 'Anthropic key',     re: /\bsk-ant-[A-Za-z0-9-]{50,}\b/g,                   sub: '[REDACTED-ANTHROPIC-KEY]' },
 ];
 
 /**
