@@ -1,6 +1,8 @@
 import chalk from 'chalk';
+import { createRequire } from 'node:module';
 
-export const VERSION = '2.0.0';
+const _require = createRequire(import.meta.url);
+export const VERSION = _require('../../package.json').version;
 
 export function hr(len = 60) { return chalk.dim('─'.repeat(len)); }
 
