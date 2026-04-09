@@ -1,0 +1,129 @@
+---
+# Core PrometheusRules for nxs — pod health, node pressure, PVC
+# Apply with:
+#   kubectl apply -f k8s/prometheus-rules.yaml
+
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: nxs-core-rules
+  namespace: monitoring
+  labels:
+    release: prometheus   # must match your Prometheus operator label selector
+spec:
+  groups:
+
+  # ── Pod health ──────────────────────────────────────────────────────────────
+  - name: pod-health
+    interval: 30s
+    rules:
+
+    - alert: PodCrashLooping
+      expr: rate(kube_pod_container_status_restarts_total[5m]) * 60 > 0
+      for: 2m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Pod {{ $labels.pod }} is crash looping"
+        description: "Pod {{ $labels.namespace }}/{{ $labels.pod }} container {{ $labels.container }} is restarting frequently."
+
+    - alert: PodOOMKilled
+      expr: kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1
+      for: 0m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Pod {{ $labels.pod }} was OOMKilled"
+        description: "Container {{ $labels.container }} in pod {{ $labels.namespace }}/{{ $labels.pod }} exceeded its memory limit."
+
+    - alert: PodNotReady
+      expr: kube_pod_status_ready{condition="true"} == 0
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Pod {{ $labels.pod }} not ready"
+        description: "Pod {{ $labels.namespace }}/{{ $labels.pod }} has been not ready for more than 5 minutes."
+
+    - alert: PodImagePullFailed
+      expr: kube_pod_container_status_waiting_reason{reason=~"ImagePullBackOff|ErrImagePull"} == 1
+      for: 2m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Pod {{ $labels.pod }} image pull failed"
+        description: "Container {{ $labels.container }} in {{ $labels.namespace }}/{{ $labels.pod }} cannot pull its image."
+
+    - alert: PodPending
+      expr: kube_pod_status_phase{phase="Pending"} == 1
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Pod {{ $labels.pod }} stuck in Pending"
+        description: "Pod {{ $labels.namespace }}/{{ $labels.pod }} has been Pending for more than 10 minutes."
+
+  # ── Node health ─────────────────────────────────────────────────────────────
+  - name: node-health
+    interval: 60s
+    rules:
+
+    - alert: NodeMemoryPressure
+      expr: kube_node_status_condition{condition="MemoryPressure",status="true"} == 1
+      for: 2m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Node {{ $labels.node }} under memory pressure"
+        description: "Node {{ $labels.node }} is under memory pressure — pods may be evicted."
+
+    - alert: NodeDiskPressure
+      expr: kube_node_status_condition{condition="DiskPressure",status="true"} == 1
+      for: 2m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Node {{ $labels.node }} under disk pressure"
+        description: "Node {{ $labels.node }} is running low on disk — pods may be evicted."
+
+    - alert: NodeNotReady
+      expr: kube_node_status_condition{condition="Ready",status="true"} == 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Node {{ $labels.node }} not ready"
+        description: "Node {{ $labels.node }} has been NotReady for more than 5 minutes."
+
+    - alert: NodeHighCPU
+      expr: 100 - (avg by(node) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 85
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Node {{ $labels.node }} CPU above 85%"
+        description: "Node {{ $labels.node }} CPU usage is {{ $value | printf \"%.0f\" }}%."
+
+  # ── PVC / Storage ────────────────────────────────────────────────────────────
+  - name: storage
+    interval: 60s
+    rules:
+
+    - alert: PVCNotBound
+      expr: kube_persistentvolumeclaim_status_phase{phase!="Bound"} == 1
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "PVC {{ $labels.persistentvolumeclaim }} not bound"
+        description: "PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} has been unbound for more than 5 minutes."
+
+    - alert: PVCFillingUp
+      expr: |
+        kubelet_volume_stats_available_bytes / kubelet_volume_stats_capacity_bytes < 0.20
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "PVC {{ $labels.persistentvolumeclaim }} over 80% full"
+        description: "PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} is {{ $value | printf \"%.0f\" }}% full."
