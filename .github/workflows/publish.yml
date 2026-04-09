@@ -1,0 +1,51 @@
+name: Publish to npm
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'package.json'       # only runs when version changes
+      - 'cli/**'
+      - 'README.md'
+
+jobs:
+  publish:
+    name: npm publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Check version not already published
+        id: version_check
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          echo "version=$PKG_VERSION" >> $GITHUB_OUTPUT
+          if npm view nxs-cli@$PKG_VERSION version 2>/dev/null; then
+            echo "already_published=true" >> $GITHUB_OUTPUT
+            echo "Version $PKG_VERSION already on npm — skipping"
+          else
+            echo "already_published=false" >> $GITHUB_OUTPUT
+            echo "Version $PKG_VERSION not yet published — will publish"
+          fi
+
+      - name: Publish to npm
+        if: steps.version_check.outputs.already_published == 'false'
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Summary
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "### Published nxs-cli@$VERSION to npm" >> $GITHUB_STEP_SUMMARY
+          echo "Install: \`npm install -g nxs-cli\`" >> $GITHUB_STEP_SUMMARY
