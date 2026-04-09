@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-import { resolve } from 'path';
+import { resolve } from 'node:path';
 import { config }  from 'dotenv';
 import { Command } from 'commander';
-import { createInterface } from 'readline';
+import { createInterface } from 'node:readline';
 import chalk from 'chalk';
 
 import { applyConfig, loadConfig, saveConfig, loadHistory, CONFIG_FILE, HISTORY_FILE } from './core/config.js';
@@ -11,6 +11,8 @@ import { registerDevops } from './tools/devops.js';
 import { registerCloud }  from './tools/cloud.js';
 import { registerK8s }    from './tools/k8s.js';
 import { registerSec }    from './tools/sec.js';
+import { registerNet }    from './tools/net.js';
+import { registerDb }     from './tools/db.js';
 import { registerStatus, registerK8sStatus, registerDevopsPipelines } from './tools/status.js';
 
 // Load .env then persisted config
@@ -32,6 +34,8 @@ registerDevops(program);
 registerCloud(program);
 registerK8s(program);
 registerSec(program);
+registerNet(program);
+registerDb(program);
 registerStatus(program);
 
 // Wire status sub-commands into existing tools
@@ -99,6 +103,25 @@ program
         ],
       },
       {
+        name: 'nxs net', color: chalk.hex('#00b4d8'),
+        tagline: 'DNS · TLS · timeouts · HTTP failures',
+        features: [
+          ['diagnose <file/--stdin>', 'Analyze any network error or connectivity failure'],
+          ['diagnose --check <host>', 'Live check: ping + DNS + TCP in one command'],
+          ['diagnose --cert <host>',  'Check TLS certificate expiry'],
+          ['errors',                  'Common network error reference card'],
+        ],
+      },
+      {
+        name: 'nxs db', color: chalk.hex('#f4a261'),
+        tagline: 'PostgreSQL · MySQL · MongoDB · Redis',
+        features: [
+          ['diagnose <file/--stdin>', 'Analyze database errors and connection failures'],
+          ['diagnose --interactive',  'Paste error manually'],
+          ['errors',                  'Common DB error reference card'],
+        ],
+      },
+      {
         name: 'nxs status', color: chalk.cyan,
         tagline: 'Live dashboard',
         features: [
@@ -133,6 +156,8 @@ program
       ['Watch pods live',               'nxs k8s pods --watch'],
       ['Full infra snapshot',           'nxs status'],
       ['Scan image for CVEs',           'trivy image myapp:latest | nxs sec scan --stdin'],
+      ['Diagnose network failure',      'curl -v https://api.internal 2>&1 | nxs net diagnose --stdin'],
+      ['Debug DB connection error',     'kubectl logs my-db-pod | nxs db diagnose --stdin'],
     ];
 
     examples.forEach(([label, cmd]) => {
@@ -292,7 +317,7 @@ Examples:
       return;
     }
 
-    const entries = loadHistory().slice(0, parseInt(opts.limit, 10));
+    const entries = loadHistory().slice(0, Number.parseInt(opts.limit, 10));
     if (opts.json) { console.log(JSON.stringify(entries, null, 2)); return; }
 
     printBanner();
@@ -318,7 +343,10 @@ Examples:
       console.log(hr());
       items.forEach((e, i) => {
         const date = new Date(e.timestamp).toLocaleString();
-        console.log(`\n  ${chalk.dim(`${i + 1}.`)} ${chalk.bold.white(e.tool ?? 'unknown')}  ${chalk.dim(date)}`);
+        const idx = chalk.dim(`${i + 1}.`);
+        const tool = chalk.bold.white(e.tool ?? 'unknown');
+        const ts = chalk.dim(date);
+        console.log(`\n  ${idx} ${tool}  ${ts}`);
         console.log(`     ${chalk.hex('#94a3b8')(e.summary)}`);
       });
       console.log('\n' + hr());
