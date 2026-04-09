@@ -1,75 +1,60 @@
-# ⚡ nxs — DevOps Intelligence CLI
+# ⚡ nxs — AI-Powered DevOps Intelligence CLI
 
-> AI-powered debugger for Kubernetes, Docker, CI/CD, AWS, GCP, Azure, and Terraform.
-> Get root cause + fix steps in seconds — right in your terminal.
+> Paste any error log — Kubernetes, Docker, CI/CD, AWS, GCP, Azure, Terraform —
+> and instantly get root cause + fix commands. Auto-notify Slack. Integrate with Prometheus Alertmanager.
 
 ```bash
 npm install -g nxs-cli
-nxs
+nxs config --setup
+kubectl logs my-pod --previous | nxs k8s debug --stdin
 ```
 
 ---
 
 ## What it does
 
-You paste or pipe a broken log. nxs tells you:
-- **What** broke (in plain English)
+You pipe or paste a broken log. nxs gives you:
+
+- **What** broke (plain English summary)
 - **Why** it broke (root cause, numbered)
 - **How** to fix it (step-by-step)
 - **Which commands** to run (copy-paste ready)
+- **Slack notification** — automatically, with AI diagnosis attached
 
-Then you can ask follow-up questions in a chat.
+Works with **Groq** (free), **Anthropic Claude**, or **no key at all** (smart mock mode).
 
 ---
 
 ## Install
 
-**Requirements:** Node.js 18+
-
 ```bash
 npm install -g nxs-cli
 ```
 
-Optional (for live cluster features):
-- `kubectl` — for `nxs k8s` and `nxs status`
+**Requirements:** Node.js 18+
+
+Optional CLIs (for live cluster features):
+- `kubectl` — for `nxs k8s`, `nxs rbac`, `nxs status`
 - `helm` — for `nxs status --only helm`
-- `gh` (GitHub CLI) — for `nxs devops pipelines`
+- `gh` — for `nxs ci analyze --run <id>`, `nxs devops pipelines`
+- `trivy` — for `nxs sec scan --image` and `nxs sec cluster`
 
 ---
 
 ## Quick start
 
-### 1. Set up your AI key (free)
-
 ```bash
-nxs config --setup
-```
+# 1. Add an AI key (free)
+nxs config --setup        # interactive wizard
+                          # Groq free key: console.groq.com
+                          # Or skip — demo mode works without any key
 
-Get a free Groq key at [console.groq.com](https://console.groq.com) — no credit card needed.
-Or use Anthropic (`ANTHROPIC_API_KEY`). Or skip — it works in demo mode without any key.
-
-### 2. Analyze your first error
-
-```bash
-# From a file
-nxs devops analyze build.log
-
-# Pipe directly from any command
+# 2. Analyze your first error
 kubectl logs my-pod --previous | nxs k8s debug --stdin
-docker build . 2>&1 | nxs devops analyze --stdin
-terraform apply 2>&1 | nxs devops analyze --stdin
-aws s3 ls 2>&1 | nxs cloud diagnose --stdin
+docker build . 2>&1       | nxs devops analyze --stdin
+terraform apply 2>&1      | nxs devops analyze --stdin
 
-# Debug a pod by name (no piping needed)
-nxs k8s debug --pod my-pod -n my-namespace
-
-# Try an example without a real error
-nxs devops examples
-```
-
-### 3. See your cluster live
-
-```bash
+# 3. Live cluster view
 nxs status
 nxs k8s pods --watch
 ```
@@ -81,77 +66,213 @@ nxs k8s pods --watch
 ### `nxs devops` — CI/CD · Docker · Terraform
 
 ```bash
-nxs devops analyze <file>          # analyze a log file
-nxs devops analyze --stdin         # pipe from any command
-nxs devops analyze --interactive   # paste manually
-nxs devops watch <file>            # tail live log, auto-analyze on errors
-nxs devops pipelines               # GitHub Actions run status
-nxs devops pipelines --watch       # live refresh every 30s
-nxs devops examples                # sample logs to test with
-nxs devops history                 # past analyses
+nxs devops analyze <file/--stdin>     # root cause + fix
+nxs devops analyze --notify slack     # analyze + post to Slack
+nxs devops pipelines                  # GitHub Actions run status
+nxs devops pipelines --watch          # live refresh
+nxs devops history
 ```
 
-**Detects:** Docker build failures, npm errors, Terraform misconfigs,
-GitHub Actions / Jenkins / GitLab CI failures
-
----
-
-### `nxs cloud` — AWS · GCP · Azure
-
-```bash
-nxs cloud diagnose <file>
-nxs cloud diagnose --stdin
-nxs cloud providers                # list supported services
-nxs cloud history
-```
-
-**Detects:** IAM permission errors, missing roles, API not enabled,
-RBAC misconfigs, resource errors
+Detects: Docker build failures, npm errors, Terraform misconfigs, pipeline failures
 
 ---
 
 ### `nxs k8s` — Kubernetes
 
 ```bash
-nxs k8s debug <file>
-nxs k8s debug --stdin
-nxs k8s debug --pod <name> -n <namespace>   # auto-fetch logs + describe
-nxs k8s status                     # nodes, pods, deployments
-nxs k8s status -n <namespace>      # filter by namespace
-nxs k8s pods                       # pod count by status
-nxs k8s pods --watch               # live refresh every 5s
-nxs k8s errors                     # quick reference card
+nxs k8s debug <file/--stdin>
+nxs k8s debug --pod <name> -n <ns>   # auto-fetch logs + describe
+nxs k8s status [-n namespace]         # nodes · pods · deployments
+nxs k8s pods [--watch]               # live pod counts by status
+nxs k8s errors                        # quick reference card
 nxs k8s history
 ```
 
-**Detects:** ImagePullBackOff, CrashLoopBackOff, OOMKilled,
-Pending (scheduling), RBAC errors
+Detects: CrashLoopBackOff, OOMKilled, ImagePullBackOff, Pending (scheduling), RBAC errors
+
+---
+
+### `nxs rbac` — Kubernetes RBAC Scanner
+
+```bash
+nxs rbac scan                         # scan current cluster
+nxs rbac scan -n <namespace>          # specific namespace
+nxs rbac scan --fail-on critical      # exit 1 if critical findings
+nxs rbac scan --json                  # raw JSON output
+```
+
+Checks: cluster-admin wildcard bindings, anonymous access, wildcard verbs,
+default SA over-permissions, cross-namespace escalation
+
+---
+
+### `nxs ci` — CI/CD Pipeline Failure Analyzer
+
+```bash
+nxs ci analyze <file/--stdin>
+nxs ci analyze --run <github-run-id>  # auto-fetch via gh CLI
+nxs ci analyze --stdin --notify slack # analyze + Slack notification
+nxs ci analyze --fail-on critical     # gate your pipeline
+nxs ci history
+```
+
+Detects: GitHub Actions, GitLab CI, Jenkins, CircleCI failures
+
+**Auto-notify on pipeline failure** — add to `.github/workflows/ci.yml`:
+
+```yaml
+notify-failure:
+  needs: [build, test]
+  if: failure()
+  steps:
+    - uses: actions/checkout@v4
+    - run: npm install
+    - run: |
+        {
+          echo "Workflow: ${{ github.workflow }}"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "Run URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          gh run view ${{ github.run_id }} 2>&1 || true
+        } | node cli/index.js ci analyze --stdin --notify slack --no-chat --json || true
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+```
+
+---
+
+### `nxs sec` — Security Scanning
+
+```bash
+nxs sec scan <file/--stdin>           # analyze Trivy/Grype/Snyk output
+nxs sec scan --image <name>           # scan Docker image directly
+nxs sec scan --pod <name>             # auto-detect pod image + scan
+nxs sec cluster [-n namespace]        # scan ALL images in cluster
+nxs sec cluster --detailed            # full CVE list per image
+nxs sec cluster --severity HIGH       # filter severity
+nxs sec history
+```
+
+---
+
+### `nxs net` — Network & Connectivity
+
+```bash
+nxs net diagnose <file/--stdin>
+nxs net diagnose --check <host>       # live: ping + DNS + TCP
+nxs net diagnose --cert <host>        # TLS certificate expiry check
+nxs net errors                        # reference card
+```
+
+---
+
+### `nxs db` — Database Errors
+
+```bash
+nxs db diagnose <file/--stdin>
+nxs db history
+```
+
+Detects: PostgreSQL, MySQL, MongoDB, Redis connection/query errors
+
+---
+
+### `nxs cloud` — AWS · GCP · Azure
+
+```bash
+nxs cloud diagnose <file/--stdin>
+nxs cloud providers                   # supported services list
+nxs cloud history
+```
+
+Detects: IAM permission errors, missing roles, API not enabled, billing issues
+
+---
+
+### `nxs explain` — Explain Any DevOps Term
+
+```bash
+nxs explain CrashLoopBackOff
+nxs explain "OOMKilled"
+nxs explain "Terraform state lock"
+nxs explain RBAC
+```
+
+---
+
+### `nxs watch` — Live Log Monitor
+
+```bash
+nxs watch /var/log/app.log            # tail a file, AI on every error
+nxs watch "kubectl logs -f my-pod"   # stream a command, AI on errors
+nxs watch app.log --notify slack      # post to Slack when errors detected
+nxs watch app.log --cooldown 120      # min seconds between AI calls
+```
 
 ---
 
 ### `nxs status` — Live Dashboard
 
 ```bash
-nxs status                         # full dashboard
-nxs status --only k8s              # cluster only
-nxs status --only pipelines        # GitHub Actions only
-nxs status --only helm             # Helm releases only
-nxs status -n <namespace>          # filter namespace
+nxs status                            # full: cluster + pipelines + helm
+nxs status --only k8s                 # cluster only
+nxs status --only pipelines           # GitHub Actions only
+nxs status --only helm                # Helm releases only
+nxs status -n <namespace>
 ```
-
-**Shows:** Node health, pod counts by status, deployment health,
-recent warning events, GitHub Actions runs, Helm release status
 
 ---
 
-## Flags (work on all analyze/debug/diagnose commands)
+### `nxs serve` — REST API Server
+
+Run nxs as a server for team and CI/CD integration.
 
 ```bash
---no-chat               Skip follow-up chat after analysis
+NXS_API_KEY=secret \
+SLACK_WEBHOOK_URL=https://hooks.slack.com/... \
+nxs serve --port 4000
+```
+
+**Endpoints:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/health` | Health check |
+| GET | `/info` | Version, tools, history count |
+| POST | `/analyze` | `{ tool, log }` → analysis JSON |
+| GET | `/history` | Past analyses `?tool=k8s&limit=20` |
+| GET | `/report` | Markdown digest `?days=7` |
+| POST | `/webhook/alertmanager` | Prometheus Alertmanager → analyze → Slack |
+| POST | `/webhook/github` | GitHub Actions failure → analyze → Slack |
+
+**Auth:** Set `NXS_API_KEY` — all endpoints except `/health` and `/webhook/*` require `X-Api-Key` header.
+
+**Prometheus Alertmanager integration** (`alertmanager.yml`):
+
+```yaml
+receivers:
+  - name: nxs
+    webhook_configs:
+      - url: http://<your-nxs-server>:4000/webhook/alertmanager
+        send_resolved: true
+route:
+  receiver: nxs
+```
+
+Every Prometheus alert automatically gets AI-diagnosed and posted to Slack.
+
+---
+
+## Flags (all analyze/debug/diagnose commands)
+
+```bash
+--notify slack          Post result to Slack (requires SLACK_WEBHOOK_URL)
+--no-chat               Skip follow-up chat
 -j, --json              Raw JSON output (for scripting/CI)
--o, --output <file>     Save full analysis as a markdown report
---fail-on <severity>    Exit code 1 if severity matches (critical|warning)
---redact                Scrub secrets/tokens before sending to AI
+-o, --output <file>     Save analysis as a markdown report
+--fail-on <severity>    Exit 1 if severity matches (critical|warning)
+--redact                Scrub secrets before sending to AI
 -s, --stdin             Read from stdin
 -i, --interactive       Paste log interactively
 ```
@@ -161,26 +282,32 @@ recent warning events, GitHub Actions runs, Helm release status
 ## Real-world one-liners
 
 ```bash
-# Debug any pod instantly — no piping needed
-nxs k8s debug --pod crash-demo -n production
+# Debug a crashing pod
+kubectl logs my-pod --previous | nxs k8s debug --stdin
 
-# Gate a CI pipeline — fail the build if analysis is critical
+# Debug and notify Slack in one command
+kubectl logs my-pod --previous | nxs k8s debug --stdin --notify slack
+
+# Gate a CI pipeline on analysis severity
 nxs devops analyze build.log --no-chat --fail-on critical
 
-# Save analysis as a report for your ticket
+# Scan all images in production namespace
+nxs sec cluster -n production --detailed
+
+# Scan Kubernetes RBAC for misconfigs
+nxs rbac scan --fail-on critical
+
+# Analyze a GitHub Actions failure
+nxs ci analyze --run 12345
+
+# Watch a live deploy, AI alert on first error
+nxs watch "kubectl logs -f deploy/my-app" --notify slack
+
+# Save analysis as a report for a ticket
 kubectl describe pod my-pod | nxs k8s debug --stdin --output report.md
 
-# Watch a live deploy log, get alerted on first error
-nxs devops watch /var/log/deploy.log --no-chat
-
-# Debug AWS error without leaking credentials
-aws s3 ls 2>&1 | nxs cloud diagnose --stdin --redact
-
-# Debug a failed GitHub Actions run
-gh run view <run-id> --log-failed | nxs devops analyze --stdin
-
-# Live pod dashboard
-nxs k8s pods --watch
+# Explain any error you see
+nxs explain OOMKilled
 
 # Full infra snapshot
 nxs status
@@ -188,92 +315,51 @@ nxs status
 
 ---
 
+## AI providers
+
+| Provider | Key | Cost |
+|---|---|---|
+| **Groq** (recommended) | `GROQ_API_KEY` | Free — [console.groq.com](https://console.groq.com) |
+| Anthropic Claude | `ANTHROPIC_API_KEY` | $5 free credits — [console.anthropic.com](https://console.anthropic.com) |
+| None | — | Demo mode — smart mock responses, no key needed |
+
+Fallback chain: **Groq → Anthropic → smart mock** (rate limit / network errors auto-fallback).
+
+```bash
+nxs config --setup           # interactive wizard
+nxs config --set GROQ_API_KEY=gsk_...
+nxs config --get             # show saved keys (masked)
+```
+
+Keys saved to `~/.nxs/config.json`. History saved to `~/.nxs/history.json` (last 50 per tool).
+
+---
+
 ## Global commands
 
 ```bash
-nxs                        # welcome screen + tool list
-nxs info                   # full feature overview
-nxs config --setup         # interactive API key wizard
-nxs config --set KEY=value # set a key directly
-nxs config --get           # show saved keys (masked)
-nxs history                # all past analyses (all tools)
-nxs history -n 5           # limit entries
-nxs history --clear        # clear all history
-nxs <tool> --help          # help for any tool
-```
-
----
-
-## AI providers
-
-| Provider | Key | Cost | How to get |
-|---|---|---|---|
-| **Groq** (recommended) | `GROQ_API_KEY` | Free | [console.groq.com](https://console.groq.com) |
-| Anthropic Claude | `ANTHROPIC_API_KEY` | $5 free credits | [console.anthropic.com](https://console.anthropic.com) |
-| None | — | Free | Demo/mock mode — works without any key |
-
-Set via wizard:
-```bash
+nxs                          # welcome screen
+nxs info                     # full feature overview
+nxs history                  # all past analyses
+nxs history --search "oom"   # search history
+nxs history --clear
+nxs report --days 7          # weekly digest
 nxs config --setup
 ```
 
-Or set directly:
-```bash
-nxs config --set GROQ_API_KEY=gsk_...
-```
-
-Keys saved to `~/.nxs/config.json` — work from any directory.
-History saved to `~/.nxs/history.json` — last 50 entries per tool.
-
 ---
 
-## Web app
-
-A browser interface is also included for teams who prefer a UI.
+## Environment variables
 
 ```bash
-git clone https://github.com/gauravtayade11/nxs
-cd nxs
-npm install
-cp .env.example .env       # add your API keys
-npm run dev                # http://localhost:5173
-```
-
-Web app features: paste or upload logs, tabbed analysis output (Summary / Root Cause / Fix Steps / Commands / Ask AI), export as markdown, history sidebar, mobile support.
-
----
-
-## Project structure
-
-```
-cli/
-  index.js              entry point + command routing
-  core/
-    ai.js               AI provider logic (Groq → Anthropic → Mock)
-    config.js           ~/.nxs/ config + history
-    exec.js             shell command runner (kubectl, helm, gh)
-    redact.js           secrets scrubber
-    runner.js           analyze / watch / history orchestration
-    ui.js               terminal output formatting
-  tools/
-    devops.js           nxs devops
-    cloud.js            nxs cloud
-    k8s.js              nxs k8s
-    status.js           nxs status + live dashboards
-
-src/                    web app (React + Vite)
-  components/
-    LogInput.jsx        textarea, file upload, example buttons
-    AnalysisOutput.jsx  tabs: summary / root cause / fix / commands / chat
-    HistorySidebar.jsx  last 5 analyses
-    Header.jsx
-  utils/
-    ai.js               Groq + Anthropic + mock (browser)
-    exampleLogs.js      sample logs
+GROQ_API_KEY          # Groq API key
+ANTHROPIC_API_KEY     # Anthropic API key
+SLACK_WEBHOOK_URL     # Slack incoming webhook URL
+NXS_API_KEY           # API key for nxs serve auth
 ```
 
 ---
 
 ## License
 
-MIT — free to use, modify, and distribute.
+MIT
