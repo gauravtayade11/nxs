@@ -74,6 +74,11 @@ export async function runAnalyze(toolModule, systemPrompt, mockFn, file, opts) {
   if (opts.json) {
     const result = await analyze(logText, systemPrompt, mockFn);
     console.log(JSON.stringify(result, null, 2));
+    // --notify still runs in JSON mode (e.g. CI workflows)
+    if (opts.notify === 'slack') {
+      const webhookUrl = process.env.SLACK_WEBHOOK_URL;
+      if (webhookUrl) await notifySlack(result, toolModule, webhookUrl).catch(() => {});
+    }
     return;
   }
 
