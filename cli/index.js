@@ -235,6 +235,7 @@ program
       ['nxs report --days 7',      'Weekly digest of all analyses'],
       ['nxs config --setup',       'Interactive API key wizard'],
       ['nxs config --set KEY=val', 'Set a key directly'],
+      ['nxs update',               'Check for latest version'],
       ['nxs info',                 'This screen'],
     ];
 
@@ -256,6 +257,33 @@ program
     console.log(chalk.dim(`  Run:  nxs config --setup   to add a key\n`));
 
     console.log(hr() + '\n');
+  });
+
+// ── nxs update ────────────────────────────────────────────────────────────
+
+program
+  .command('update')
+  .description('Check for the latest version and print upgrade command')
+  .action(async () => {
+    const { execSync } = await import('node:child_process');
+    const ora = (await import('ora')).default;
+    printBanner();
+    const spinner = ora('Checking for updates…').start();
+    try {
+      const latest = execSync('npm view @nextsight/nxs-cli version 2>/dev/null', { encoding: 'utf8' }).trim();
+      spinner.stop();
+      if (!latest) throw new Error('empty');
+      if (latest === VERSION) {
+        console.log(chalk.green(`  ✓ Already on latest version ${chalk.bold(VERSION)}\n`));
+      } else {
+        console.log(chalk.yellow(`  Update available: ${chalk.bold(latest)}  ${chalk.dim(`(current: ${VERSION})`)}\n`));
+        console.log(`  Run:  ${chalk.cyan('npm install -g @nextsight/nxs-cli')}\n`);
+      }
+    } catch {
+      spinner.stop();
+      console.log(chalk.dim('  Could not reach npm. Check your connection.\n'));
+      console.log(chalk.dim('  Or check manually: npm view @nextsight/nxs-cli version\n'));
+    }
   });
 
 // ── nxs config ────────────────────────────────────────────────────────────
@@ -580,6 +608,17 @@ Examples:
 
 if (process.argv.slice(2).length === 0) {
   printBanner();
+
+  // First-run: no AI key configured
+  const _cfg = loadConfig();
+  const _hasKey = process.env.GROQ_API_KEY || process.env.ANTHROPIC_API_KEY ||
+                  _cfg.GROQ_API_KEY || _cfg.ANTHROPIC_API_KEY;
+  if (!_hasKey) {
+    console.log(chalk.bgYellow.black.bold('  ⚡ No AI key configured  '));
+    console.log(chalk.dim('  Run: ') + chalk.cyan('nxs config --setup') + chalk.dim('  to add a free Groq key (console.groq.com)'));
+    console.log(chalk.dim('  Or skip — demo mode works without any key.\n'));
+  }
+
   console.log(hr());
   console.log(chalk.bold('\n  Available tools:\n'));
 
@@ -638,6 +677,7 @@ if (process.argv.slice(2).length === 0) {
   console.log(chalk.dim('\n  ── Global ───────────────────────────────────────────'));
   console.log(`    ${chalk.dim('›')} ${chalk.cyan('nxs config --setup')}    ${chalk.dim('Set up API keys')}`);
   console.log(`    ${chalk.dim('›')} ${chalk.cyan('nxs history')}           ${chalk.dim('All past analyses')}`);
+  console.log(`    ${chalk.dim('›')} ${chalk.cyan('nxs update')}            ${chalk.dim('Check for latest version')}`);
   console.log(`    ${chalk.dim('›')} ${chalk.cyan('nxs <tool> --help')}     ${chalk.dim('Help for any tool')}`);
 
   console.log('\n' + hr() + '\n');
