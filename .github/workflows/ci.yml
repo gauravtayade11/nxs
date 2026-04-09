@@ -83,8 +83,18 @@ jobs:
 
       - name: Analyze failure and notify Slack
         run: |
-          gh run view ${{ github.run_id }} --log-failed | \
-          node cli/index.js ci analyze --stdin --notify slack --no-chat --json || true
+          {
+            echo "GitHub Actions pipeline failed"
+            echo "Workflow: ${{ github.workflow }}"
+            echo "Branch:   ${{ github.ref_name }}"
+            echo "Commit:   ${{ github.sha }}"
+            echo "Actor:    ${{ github.actor }}"
+            echo "Run URL:  ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo "Lint:     ${{ needs.lint.result }}"
+            echo "Smoke:    ${{ needs.smoke-test.result }}"
+            echo "---"
+            gh run view ${{ github.run_id }} 2>&1 || true
+          } | node cli/index.js ci analyze --stdin --notify slack --no-chat --json || true
         env:
           GH_TOKEN: ${{ github.token }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}

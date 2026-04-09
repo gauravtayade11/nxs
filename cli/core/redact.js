@@ -66,6 +66,3 @@ export function warnIfSensitive(text) {
   if (/AccountKey=[A-Za-z0-9+/=]+/.test(text))         warnings.push('Possible Azure storage key in log');
   return warnings;
 }
-
-const FAIL_TEST = 1
-debugger
