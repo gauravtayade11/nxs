@@ -68,7 +68,9 @@ export async function analyze(logText, systemPrompt, mockFn) {
       // Rate limit or quota — fall through to Anthropic/mock
       const isFallback = msg.includes('rate_limit') || msg.includes('Request too large') ||
                          msg.includes('quota') || msg.includes('fetch failed') ||
-                         msg.includes('ENOTFOUND') || msg.includes('ECONNREFUSED');
+                         msg.includes('ENOTFOUND') || msg.includes('ECONNREFUSED') ||
+                         msg.includes('Failed to generate JSON') || msg.includes('json_validate_failed') ||
+                         msg.includes('failed_generation');
       if (isFallback) {
         if (!antKey) {
           // Fall to mock with a note

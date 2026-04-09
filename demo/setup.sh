@@ -45,31 +45,31 @@ setup() {
 
   # Create namespaces
   log "Creating namespaces..."
-  kubectl create namespace "$BAD_NS"  --dry-run=client -o yaml | kubectl apply -f - -q
-  kubectl create namespace "$GOOD_NS" --dry-run=client -o yaml | kubectl apply -f - -q
+  kubectl create namespace "$BAD_NS"  --dry-run=client -o yaml | kubectl apply -f - 2>/dev/null
+  kubectl create namespace "$GOOD_NS" --dry-run=client -o yaml | kubectl apply -f - 2>/dev/null
   ok "Namespaces ready: $BAD_NS / $GOOD_NS"
 
   # Deploy broken pods
   echo ""
   log "Deploying WORST CASE pods (broken)..."
 
-  kubectl apply -f "$SCRIPT_DIR/k8s/crash-loop.yaml" -q
+  kubectl apply -f "$SCRIPT_DIR/k8s/crash-loop.yaml" 2>/dev/null
   ok "crash-loop-demo   → CrashLoopBackOff (bad command)"
 
-  kubectl apply -f "$SCRIPT_DIR/k8s/image-pull.yaml" -q
+  kubectl apply -f "$SCRIPT_DIR/k8s/image-pull.yaml" 2>/dev/null
   ok "image-pull-demo   → ImagePullBackOff (non-existent image)"
 
-  kubectl apply -f "$SCRIPT_DIR/k8s/oom-kill.yaml" -q
+  kubectl apply -f "$SCRIPT_DIR/k8s/oom-kill.yaml" 2>/dev/null
   ok "oom-demo          → OOMKilled (memory limit too low)"
 
-  kubectl apply -f "$SCRIPT_DIR/k8s/pending.yaml" -q
+  kubectl apply -f "$SCRIPT_DIR/k8s/pending.yaml" 2>/dev/null
   ok "pending-demo      → Pending (impossible nodeSelector)"
 
   # Deploy healthy pods
   echo ""
   log "Deploying GOOD CASE pods (healthy)..."
 
-  kubectl apply -f "$SCRIPT_DIR/k8s/healthy.yaml" -q
+  kubectl apply -f "$SCRIPT_DIR/k8s/healthy.yaml" 2>/dev/null
   ok "healthy-demo      → Running (nginx, proper probes + limits)"
 
   echo ""
@@ -115,8 +115,8 @@ teardown() {
   echo ""
   log "Removing all nxs demo resources..."
 
-  kubectl delete namespace "$BAD_NS"  --ignore-not-found -q && ok "Deleted namespace: $BAD_NS"
-  kubectl delete namespace "$GOOD_NS" --ignore-not-found -q && ok "Deleted namespace: $GOOD_NS"
+  kubectl delete namespace "$BAD_NS"  --ignore-not-found 2>/dev/null && ok "Deleted namespace: $BAD_NS"
+  kubectl delete namespace "$GOOD_NS" --ignore-not-found 2>/dev/null && ok "Deleted namespace: $GOOD_NS"
 
   echo ""
   ok "Teardown complete. Your cluster is clean."

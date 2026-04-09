@@ -101,6 +101,21 @@ export async function runAnalyze(toolModule, systemPrompt, mockFn, file, opts) {
   addHistory(toolModule, logText, result);
   printResult(result);
 
+  // --notify slack: post result to Slack webhook
+  if (opts.notify === 'slack') {
+    const webhookUrl = process.env.SLACK_WEBHOOK_URL;
+    if (!webhookUrl) {
+      console.log(chalk.yellow('  ⚠ SLACK_WEBHOOK_URL not set. Add to .env:\n    SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...\n'));
+    } else {
+      try {
+        await notifySlack(result, toolModule, webhookUrl);
+        console.log(chalk.green('  ✓ Slack notified\n'));
+      } catch (e) {
+        console.log(chalk.yellow(`  ⚠ Slack notify failed: ${e.message}\n`));
+      }
+    }
+  }
+
   // --output: save full analysis to a markdown file
   if (opts.output) {
     try {
@@ -159,6 +174,35 @@ export async function runHistory(toolModule, opts) {
   });
 
   console.log('\n' + hr() + '\n');
+}
+
+async function notifySlack(result, toolModule, webhookUrl) {
+  const sev = result.severity ?? 'unknown';
+  const sevEmoji = { critical: '🔴', warning: '🟡', info: '🟢' }[sev] ?? '⚪';
+  const sevColor = { critical: '#e74c3c', warning: '#f39c12', info: '#2ecc71' }[sev] ?? '#95a5a6';
+
+  const body = {
+    attachments: [{
+      color: sevColor,
+      blocks: [
+        { type: 'header', text: { type: 'plain_text', text: `${sevEmoji} nxs ${toolModule.toUpperCase()} — ${sev.toUpperCase()}` } },
+        { type: 'section', text: { type: 'mrkdwn', text: `*Summary*\n${String(result.summary ?? '').slice(0, 500)}` } },
+        { type: 'section', text: { type: 'mrkdwn', text: `*Root Cause*\n${String(result.rootCause ?? '').slice(0, 500)}` } },
+        ...(result.commands ? [{
+          type: 'section',
+          text: { type: 'mrkdwn', text: `*Fix Commands*\n\`\`\`${String(result.commands).slice(0, 400)}\`\`\`` },
+        }] : []),
+        { type: 'context', elements: [{ type: 'mrkdwn', text: `nxs CLI · ${new Date().toISOString()}` }] },
+      ],
+    }],
+  };
+
+  const resp = await fetch(webhookUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) throw new Error(`Slack HTTP ${resp.status}`);
 }
 
 function buildMarkdown(result, logText) {

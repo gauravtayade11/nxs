@@ -7,12 +7,17 @@ import chalk from 'chalk';
 
 import { applyConfig, loadConfig, saveConfig, loadHistory, CONFIG_FILE, HISTORY_FILE } from './core/config.js';
 import { printBanner, providerInfo, hr, prompt, VERSION } from './core/ui.js';
-import { registerDevops } from './tools/devops.js';
-import { registerCloud }  from './tools/cloud.js';
-import { registerK8s }    from './tools/k8s.js';
-import { registerSec }    from './tools/sec.js';
-import { registerNet }    from './tools/net.js';
-import { registerDb }     from './tools/db.js';
+import { registerDevops }  from './tools/devops.js';
+import { registerCloud }   from './tools/cloud.js';
+import { registerK8s }     from './tools/k8s.js';
+import { registerSec }     from './tools/sec.js';
+import { registerNet }     from './tools/net.js';
+import { registerDb }      from './tools/db.js';
+import { registerCi }      from './tools/ci.js';
+import { registerExplain } from './tools/explain.js';
+import { registerWatch }   from './tools/watch.js';
+import { registerServe }   from './tools/serve.js';
+import { registerRbac }    from './tools/rbac.js';
 import { registerStatus, registerK8sStatus, registerDevopsPipelines } from './tools/status.js';
 
 // Load .env then persisted config
@@ -36,6 +41,11 @@ registerK8s(program);
 registerSec(program);
 registerNet(program);
 registerDb(program);
+registerCi(program);
+registerExplain(program);
+registerWatch(program);
+registerServe(program);
+registerRbac(program);
 registerStatus(program);
 
 // Wire status sub-commands into existing tools
@@ -124,6 +134,35 @@ program
         ],
       },
       {
+        name: 'nxs ci', color: chalk.hex('#f9ca24'),
+        tagline: 'GitHub Actions · GitLab CI · Jenkins · CircleCI',
+        features: [
+          ['analyze <file/--stdin>',   'Root cause + fix for any CI/CD pipeline failure'],
+          ['analyze --run <id>',       'Auto-fetch a GitHub Actions run log via gh CLI'],
+          ['analyze --notify slack',   'Post result to Slack after analysis'],
+        ],
+      },
+      {
+        name: 'nxs explain', color: chalk.hex('#a29bfe'),
+        tagline: 'Plain-English explainer for any DevOps term',
+        features: [
+          ['CrashLoopBackOff',         'Explain any Kubernetes error state'],
+          ['"CVE-2024-1234"',          'Explain a CVE — CVSS, affected pkg, fix version'],
+          ['ETIMEDOUT / ECONNREFUSED', 'Explain any network error code'],
+          ['"connection pool exhausted"', 'Explain any phrase or concept'],
+        ],
+      },
+      {
+        name: 'nxs watch', color: chalk.hex('#fd79a8'),
+        tagline: 'Live log watcher — auto-analyze errors as they appear',
+        features: [
+          ['<logfile>',                'Tail a file and analyze errors automatically'],
+          ['"kubectl logs -f <pod>"',  'Stream any command output and watch for errors'],
+          ['<source> --notify slack',  'Alert Slack on every detected error'],
+          ['<source> --cooldown 60',   'Control how often analyses fire (default 30s)'],
+        ],
+      },
+      {
         name: 'nxs status', color: chalk.cyan,
         tagline: 'Live dashboard',
         features: [
@@ -160,6 +199,10 @@ program
       ['Scan image for CVEs',           'trivy image myapp:latest | nxs sec scan --stdin'],
       ['Diagnose network failure',      'curl -v https://api.internal 2>&1 | nxs net diagnose --stdin'],
       ['Debug DB connection error',     'kubectl logs my-db-pod | nxs db diagnose --stdin'],
+      ['Analyze GitHub Actions failure','nxs ci analyze --run 12345'],
+      ['Explain any K8s error',         'nxs explain CrashLoopBackOff'],
+      ['Watch pod logs live',           'nxs watch "kubectl logs -f my-pod" --notify slack'],
+      ['Analyze CI failure + Slack',    'gh run view 123 --log-failed | nxs ci analyze --stdin --notify slack'],
     ];
 
     examples.forEach(([label, cmd]) => {
@@ -305,11 +348,14 @@ program
   .description('Show all past analyses across all tools')
   .option('-n, --limit <n>', 'Number of entries', '20')
   .option('--clear', 'Clear ALL history')
+  .option('--search <term>', 'Search history by keyword')
   .option('-j, --json', 'Output as JSON')
   .addHelpText('after', `
 Examples:
   $ nxs history
   $ nxs history -n 5
+  $ nxs history --search CrashLoopBackOff
+  $ nxs history --search "connection pool"
   $ nxs history --clear`)
   .action(async (opts) => {
     if (opts.clear) {
@@ -319,14 +365,38 @@ Examples:
       return;
     }
 
-    const entries = loadHistory().slice(0, Number.parseInt(opts.limit, 10));
+    let entries = loadHistory();
+
+    // --search: filter by keyword across summary, rootCause, logPreview
+    if (opts.search) {
+      const term = opts.search.toLowerCase();
+      entries = entries.filter((e) =>
+        (e.summary ?? '').toLowerCase().includes(term) ||
+        (e.rootCause ?? '').toLowerCase().includes(term) ||
+        (e.tool ?? '').toLowerCase().includes(term) ||
+        (e.toolModule ?? '').toLowerCase().includes(term) ||
+        (e.logPreview ?? '').toLowerCase().includes(term)
+      );
+    }
+
+    entries = entries.slice(0, Number.parseInt(opts.limit, 10));
     if (opts.json) { console.log(JSON.stringify(entries, null, 2)); return; }
 
     printBanner();
 
+    if (opts.search && entries.length === 0) {
+      console.log(chalk.dim(`  No results for "${opts.search}".\n`));
+      return;
+    }
+
     if (entries.length === 0) {
       console.log(chalk.dim('  No history yet. Try: nxs devops analyze error.log\n'));
       return;
+    }
+
+    if (opts.search) {
+      console.log(chalk.bold(`  Search: "${opts.search}"  —  ${entries.length} result(s)\n`));
+      console.log(hr());
     }
 
     // Group by tool module
@@ -345,16 +415,162 @@ Examples:
       console.log(hr());
       items.forEach((e, i) => {
         const date = new Date(e.timestamp).toLocaleString();
+        const sev = e.severity;
+        const sevBadge = sev === 'critical' ? chalk.red(' CRITICAL') : sev === 'warning' ? chalk.yellow(' WARNING') : '';
         const idx = chalk.dim(`${i + 1}.`);
         const tool = chalk.bold.white(e.tool ?? 'unknown');
         const ts = chalk.dim(date);
-        console.log(`\n  ${idx} ${tool}  ${ts}`);
+        console.log(`\n  ${idx} ${tool}${sevBadge}  ${ts}`);
         console.log(`     ${chalk.hex('#94a3b8')(e.summary)}`);
+        if (e.logPreview) console.log(`     ${chalk.dim(e.logPreview.replace(/\n/g, ' ').slice(0, 80) + '…')}`);
       });
       console.log('\n' + hr());
     });
 
     console.log(chalk.dim(`\n  History file: ${HISTORY_FILE}\n`));
+  });
+
+// ── nxs report ────────────────────────────────────────────────────────────
+
+program
+  .command('report')
+  .description('Generate a digest of past analyses (last 7 days by default)')
+  .option('--days <n>', 'Number of days to include', '7')
+  .option('-o, --output <file>', 'Save report as markdown file')
+  .option('--notify <target>', 'Post report to: slack')
+  .option('-j, --json', 'Output raw stats as JSON')
+  .addHelpText('after', `
+Examples:
+  $ nxs report
+  $ nxs report --days 30
+  $ nxs report --output weekly.md
+  $ nxs report --notify slack
+  $ nxs report --days 1 --notify slack   # daily digest`)
+  .action(async (opts) => {
+    const days = Math.min(Number.parseInt(opts.days, 10) || 7, 365);
+    const since = Date.now() - days * 24 * 60 * 60 * 1000;
+    const entries = loadHistory().filter((e) => new Date(e.timestamp).getTime() > since);
+
+    // Stats
+    const counts  = { critical: 0, warning: 0, info: 0 };
+    const byTool  = {};
+    for (const e of entries) {
+      const sev = e.severity ?? 'info';
+      counts[sev] = (counts[sev] ?? 0) + 1;
+      const mod = e.toolModule ?? 'unknown';
+      if (!byTool[mod]) byTool[mod] = { total: 0, critical: 0, warning: 0, info: 0 };
+      byTool[mod].total++;
+      byTool[mod][sev] = (byTool[mod][sev] ?? 0) + 1;
+    }
+
+    if (opts.json) {
+      console.log(JSON.stringify({ days, total: entries.length, counts, byTool }, null, 2));
+      return;
+    }
+
+    printBanner('Weekly digest');
+
+    const dateRange = `${new Date(since).toLocaleDateString()} – ${new Date().toLocaleDateString()}`;
+    console.log(hr());
+    console.log(chalk.bold(`\n  REPORT — last ${days} day${days !== 1 ? 's' : ''}  ${chalk.dim(`(${dateRange})`)}\n`));
+
+    console.log(`  Total analyses  : ${chalk.white(entries.length)}`);
+    console.log(`  Critical        : ${counts.critical > 0 ? chalk.red.bold(counts.critical) : chalk.dim(counts.critical)}`);
+    console.log(`  Warning         : ${counts.warning  > 0 ? chalk.yellow(counts.warning)    : chalk.dim(counts.warning)}`);
+    console.log(`  Info            : ${chalk.dim(counts.info)}`);
+
+    if (Object.keys(byTool).length > 0) {
+      console.log(chalk.bold('\n  By tool:\n'));
+      console.log(hr());
+      Object.entries(byTool)
+        .sort((a, b) => b[1].critical - a[1].critical || b[1].total - a[1].total)
+        .forEach(([tool, s]) => {
+          const bar = '█'.repeat(Math.min(s.total, 20));
+          const sevStr = s.critical > 0 ? chalk.red(`C:${s.critical} `) : '';
+          const warnStr = s.warning > 0 ? chalk.yellow(`W:${s.warning} `) : '';
+          console.log(`  ${chalk.white(tool.padEnd(12))}  ${chalk.dim(bar.padEnd(20))}  ${sevStr}${warnStr}${chalk.dim(`${s.total} total`)}`);
+        });
+    }
+
+    const topCritical = entries.filter((e) => e.severity === 'critical').slice(0, 5);
+    if (topCritical.length > 0) {
+      console.log(chalk.bold('\n  Top critical issues:\n'));
+      console.log(hr());
+      topCritical.forEach((e, i) => {
+        console.log(`\n  ${chalk.dim(`${i + 1}.`)} ${chalk.red.bold(e.tool ?? e.toolModule ?? 'unknown')}  ${chalk.dim(new Date(e.timestamp).toLocaleString())}`);
+        console.log(`     ${chalk.hex('#94a3b8')(e.summary?.slice(0, 120) ?? '')}`);
+      });
+    }
+
+    console.log('\n' + hr() + '\n');
+
+    // --output: save markdown
+    if (opts.output) {
+      const lines = [
+        `# nxs Report — Last ${days} Days`,
+        `**Period:** ${dateRange}  |  **Total:** ${entries.length}  |  **Critical:** ${counts.critical}  |  **Warning:** ${counts.warning}`,
+        '',
+        '## By Tool',
+        '',
+        '| Tool | Total | Critical | Warning | Info |',
+        '|------|-------|----------|---------|------|',
+        ...Object.entries(byTool)
+          .sort((a, b) => b[1].critical - a[1].critical)
+          .map(([tool, s]) => `| ${tool} | ${s.total} | ${s.critical} | ${s.warning} | ${s.info} |`),
+        '',
+        '## Critical Issues',
+        '',
+        ...topCritical.flatMap((e) => [
+          `### ${e.tool ?? e.toolModule} — ${new Date(e.timestamp).toLocaleString()}`,
+          `${e.summary ?? ''}`,
+          '',
+        ]),
+        entries.length === 0 ? '_No analyses in this period._' : '',
+      ];
+      const { writeFileSync } = await import('node:fs');
+      writeFileSync(opts.output, lines.join('\n'), 'utf8');
+      console.log(chalk.green(`  ✓ Report saved to ${opts.output}\n`));
+    }
+
+    // --notify slack
+    if (opts.notify === 'slack') {
+      const webhookUrl = process.env.SLACK_WEBHOOK_URL;
+      if (!webhookUrl) {
+        console.log(chalk.yellow('  ⚠ SLACK_WEBHOOK_URL not set\n'));
+      } else {
+        try {
+          const sevEmoji = counts.critical > 0 ? '🔴' : counts.warning > 0 ? '🟡' : '🟢';
+          const toolLines = Object.entries(byTool)
+            .sort((a, b) => b[1].critical - a[1].critical)
+            .slice(0, 6)
+            .map(([tool, s]) => `• *${tool}*: ${s.total} analyses${s.critical > 0 ? ` (🔴 ${s.critical} critical)` : ''}`)
+            .join('\n');
+
+          await fetch(webhookUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              attachments: [{
+                color: counts.critical > 0 ? '#e74c3c' : counts.warning > 0 ? '#f39c12' : '#2ecc71',
+                blocks: [
+                  { type: 'header', text: { type: 'plain_text', text: `${sevEmoji} nxs Report — Last ${days} days` } },
+                  { type: 'section', text: { type: 'mrkdwn', text: `*Total:* ${entries.length}  |  🔴 Critical: ${counts.critical}  |  🟡 Warning: ${counts.warning}  |  🟢 Info: ${counts.info}` } },
+                  ...(toolLines ? [{ type: 'section', text: { type: 'mrkdwn', text: `*By tool:*\n${toolLines}` } }] : []),
+                  ...(topCritical.length > 0 ? [{
+                    type: 'section',
+                    text: { type: 'mrkdwn', text: `*Top critical:*\n${topCritical.slice(0, 3).map((e) => `• ${e.tool ?? 'unknown'}: ${(e.summary ?? '').slice(0, 100)}`).join('\n')}` },
+                  }] : []),
+                  { type: 'context', elements: [{ type: 'mrkdwn', text: `nxs report · ${new Date().toISOString()}` }] },
+                ],
+              }],
+            }),
+          });
+          console.log(chalk.green('  ✓ Report posted to Slack\n'));
+        } catch (e) {
+          console.log(chalk.yellow(`  ⚠ Slack failed: ${e.message}\n`));
+        }
+      }
+    }
   });
 
 // ── Welcome screen (no args) ───────────────────────────────────────────────
@@ -382,6 +598,24 @@ if (process.argv.slice(2).length === 0) {
       color: chalk.blue,
       desc: 'Kubernetes pods, events, node issues',
       cmds: ['debug <file>', 'debug --stdin', 'status', 'pods', 'errors'],
+    },
+    {
+      name: 'ci',
+      color: chalk.hex('#f9ca24'),
+      desc: 'GitHub Actions, GitLab CI, Jenkins, CircleCI failures',
+      cmds: ['analyze <file>', 'analyze --stdin', 'analyze --run <id>'],
+    },
+    {
+      name: 'explain',
+      color: chalk.hex('#a29bfe'),
+      desc: 'Explain any error, K8s state, CVE, or DevOps concept',
+      cmds: ['CrashLoopBackOff', '"CVE-2024-1234"', 'ETIMEDOUT'],
+    },
+    {
+      name: 'watch',
+      color: chalk.hex('#fd79a8'),
+      desc: 'Tail a log or command — auto-analyze errors live',
+      cmds: ['<logfile>', '"kubectl logs -f <pod>"', '<source> --notify slack'],
     },
     {
       name: 'status',

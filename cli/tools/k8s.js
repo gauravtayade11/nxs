@@ -93,6 +93,7 @@ export function registerK8s(program) {
     .option('--redact', 'Scrub secrets/tokens from log before sending to AI')
     .option('-o, --output <file>', 'Save analysis to a markdown file')
     .option('--fail-on <severity>', 'Exit code 1 if severity matches (critical|warning)')
+    .option('--notify <target>', 'Notify after analysis: slack')
     .addHelpText('after', `
 Examples:
   $ nxs k8s debug pod-error.log

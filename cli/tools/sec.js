@@ -130,7 +130,7 @@ Examples:
           process.exit(1);
         }
         if (!opts.json) console.log(chalk.dim(`  Running trivy on image: ${chalk.white(opts.image)}\n`));
-        const { stdout, stderr } = await run(`trivy image --no-progress ${opts.image} 2>/dev/null`);
+        const { stdout, stderr } = await run(`trivy image --no-progress ${opts.image} 2>/dev/null`, { timeout: 300000 });
         const output = stdout || stderr;
         if (!output.trim()) {
           console.error(chalk.red('  trivy returned no output.'));
@@ -174,7 +174,7 @@ Examples:
           process.exit(1);
         }
 
-        const { stdout, stderr } = await run(`trivy image --no-progress ${image} 2>/dev/null`);
+        const { stdout, stderr } = await run(`trivy image --no-progress ${image} 2>/dev/null`, { timeout: 300000 });
         const output = stdout || stderr;
         await runAnalyze('sec', SYSTEM_PROMPT, mockAnalyze, null, { ...opts, _injected: output });
         return;
@@ -203,13 +203,16 @@ Examples:
     .option('--output <file>',       'Save full report as markdown file')
     .option('--skip <images>',       'Comma-separated image patterns to skip (e.g. "pause,coredns")')
     .option('--concurrency <n>',     'How many images to scan in parallel (default: 3)', '3')
+    .option('--detailed',            'Show all CVEs per image in terminal (default: top 3)')
     .addHelpText('after', `
 Examples:
   $ nxs sec cluster                            # scan all images, all namespaces
   $ nxs sec cluster -n production              # production namespace only
   $ nxs sec cluster --severity CRITICAL        # only show critical
   $ nxs sec cluster --fail-on critical         # exit 1 if any critical found
-  $ nxs sec cluster --output cluster-sec.md   # save full report
+  $ nxs sec cluster --output cluster-sec.md   # save full markdown report
+  $ nxs sec cluster --detailed                 # show every CVE in terminal
+  $ nxs sec cluster --detailed --output r.md  # full terminal + save file
   $ nxs sec cluster --skip "pause,coredns,metrics-server"`)
     .action(async (opts) => {
       printBanner('Cluster image security scanner');
@@ -270,42 +273,63 @@ Examples:
       const results = [];
       const sevOrder = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3, UNKNOWN: 4 };
 
+      // Scan sequentially within each batch to avoid stdout collision
       const scanImage = async (image) => {
         const label = image.length > 55 ? '...' + image.slice(-52) : image;
-        process.stdout.write(chalk.dim(`  Scanning ${label}...`));
 
-        const { stdout } = await run(
-          `trivy image --no-progress --severity ${opts.severity} --format json ${image} 2>/dev/null`
+        const { stdout, stderr, ok } = await run(
+          `trivy image --no-progress --severity ${opts.severity} --format json ${image}`,
+          { timeout: 300000 }
         );
 
         let critical = 0, high = 0, medium = 0, low = 0;
         let vulns = [];
+        let scanError = null;
 
-        try {
-          const parsed = JSON.parse(stdout);
-          for (const result of parsed.Results ?? []) {
-            for (const v of result.Vulnerabilities ?? []) {
-              vulns.push({ id: v.VulnerabilityID, pkg: v.PkgName, installed: v.InstalledVersion, fixed: v.FixedVersion, severity: v.Severity });
-              if (v.Severity === 'CRITICAL') critical++;
-              else if (v.Severity === 'HIGH') high++;
-              else if (v.Severity === 'MEDIUM') medium++;
-              else if (v.Severity === 'LOW') low++;
+        // Detect trivy pull/scan failure — check stderr for errors, stdout for JSON
+        const errOut = stderr;
+        const isPullError = errOut.includes('pull access denied') ||
+          errOut.includes('manifest unknown') ||
+          errOut.includes('No such image') ||
+          errOut.includes('repository does not exist') ||
+          /image.*not found/i.test(errOut);
+        if (!ok || errOut.includes('FATAL') || isPullError) {
+          scanError = isPullError ? 'image not found / pull failed' : 'scan error';
+        } else {
+          try {
+            const parsed = JSON.parse(stdout);
+            for (const result of parsed.Results ?? []) {
+              for (const v of result.Vulnerabilities ?? []) {
+                vulns.push({ id: v.VulnerabilityID, pkg: v.PkgName, installed: v.InstalledVersion, fixed: v.FixedVersion, severity: v.Severity });
+                if (v.Severity === 'CRITICAL') critical++;
+                else if (v.Severity === 'HIGH') high++;
+                else if (v.Severity === 'MEDIUM') medium++;
+                else if (v.Severity === 'LOW') low++;
+              }
             }
+          } catch {
+            scanError = 'failed to parse trivy output';
           }
-        } catch { /* trivy returned non-JSON or empty */ }
+        }
 
-        const total = critical + high + medium + low;
-        const worstSev = critical > 0 ? 'CRITICAL' : high > 0 ? 'HIGH' : medium > 0 ? 'MEDIUM' : low > 0 ? 'LOW' : 'CLEAN';
+        const total    = critical + high + medium + low;
+        const worstSev = scanError ? 'ERROR'
+          : critical > 0 ? 'CRITICAL' : high > 0 ? 'HIGH'
+          : medium > 0 ? 'MEDIUM' : low > 0 ? 'LOW' : 'CLEAN';
 
-        // Overwrite the scanning line
-        const sevColor = { CRITICAL: chalk.red.bold, HIGH: chalk.hex('#ff6b35').bold, MEDIUM: chalk.yellow, LOW: chalk.dim, CLEAN: chalk.green }[worstSev];
-        const badge = total === 0 ? chalk.green('✓ CLEAN') : sevColor(`● ${worstSev}`) + chalk.dim(` (C:${critical} H:${high} M:${medium} L:${low})`);
-        process.stdout.write(`\r  ${badge.padEnd(40)} ${chalk.dim(label)}\n`);
+        const badge = scanError
+          ? chalk.dim(`? ERROR   `) + chalk.dim(`(${scanError})`)
+          : total === 0
+            ? chalk.green('✓ CLEAN   ')
+            : ({ CRITICAL: chalk.red.bold, HIGH: chalk.hex('#ff6b35').bold, MEDIUM: chalk.yellow, LOW: chalk.dim }[worstSev])(`● ${worstSev} `) +
+              chalk.dim(`(C:${critical} H:${high} M:${medium} L:${low})`);
 
-        return { image, pods: imageMap[image], critical, high, medium, low, total, worstSev, vulns };
+        console.log(`  ${badge.padEnd(52)} ${chalk.dim(label)}`);
+
+        return { image, pods: imageMap[image], critical, high, medium, low, total, worstSev, vulns, scanError };
       };
 
-      // Run in batches of `concurrency`
+      // Sequential within batches — no stdout collision
       for (let i = 0; i < images.length; i += concurrency) {
         const batch = images.slice(i, i + concurrency);
         const batchResults = await Promise.all(batch.map(scanImage));
@@ -318,60 +342,120 @@ Examples:
       const totalCritical = results.reduce((s, r) => s + r.critical, 0);
       const totalHigh     = results.reduce((s, r) => s + r.high, 0);
       const affected      = results.filter((r) => r.total > 0).length;
-      const clean         = results.filter((r) => r.total === 0).length;
+      const errored       = results.filter((r) => r.scanError).length;
+      const clean         = results.filter((r) => r.total === 0 && !r.scanError).length;
 
       console.log(hr());
       console.log(chalk.bold('\n  CLUSTER SECURITY SUMMARY\n'));
       console.log(`  Images scanned   : ${chalk.white(results.length)}`);
       console.log(`  Images affected  : ${affected > 0 ? chalk.red.bold(affected) : chalk.green(affected)}`);
       console.log(`  Images clean     : ${chalk.green(clean)}`);
+      console.log(`  Scan errors      : ${errored > 0 ? chalk.yellow(errored) + chalk.dim(' (pull failed / not found)') : chalk.dim(errored)}`);
       console.log(`  Total CRITICAL   : ${totalCritical > 0 ? chalk.red.bold(totalCritical) : chalk.green(totalCritical)}`);
       console.log(`  Total HIGH       : ${totalHigh > 0 ? chalk.hex('#ff6b35').bold(totalHigh) : chalk.green(totalHigh)}`);
 
       if (affected > 0) {
-        console.log(chalk.bold('\n  TOP RISK IMAGES\n'));
+        const heading = opts.detailed ? '  FULL CVE REPORT' : '  TOP RISK IMAGES';
+        console.log(chalk.bold(`\n${heading}\n`));
         console.log(hr());
-        results.filter((r) => r.total > 0).slice(0, 10).forEach((r) => {
-          const sevColor = { CRITICAL: chalk.red.bold, HIGH: chalk.hex('#ff6b35').bold, MEDIUM: chalk.yellow, LOW: chalk.dim }[r.worstSev] ?? chalk.white;
+
+        const sevColor = { CRITICAL: chalk.red.bold, HIGH: chalk.hex('#ff6b35').bold, MEDIUM: chalk.yellow, LOW: chalk.dim };
+        const imageLimit = opts.detailed ? results.length : 10;
+
+        results.filter((r) => r.total > 0).slice(0, imageLimit).forEach((r) => {
+          const sc = sevColor[r.worstSev] ?? chalk.white;
           const img = r.image.length > 50 ? '...' + r.image.slice(-47) : r.image;
-          console.log(`\n  ${sevColor(`● ${r.worstSev}`)}  ${chalk.white(img)}`);
+          console.log(`\n  ${sc(`● ${r.worstSev}`)}  ${chalk.white(img)}`);
           console.log(chalk.dim(`    C:${r.critical} H:${r.high} M:${r.medium} L:${r.low}  |  Used by: ${r.pods.slice(0, 3).join(', ')}${r.pods.length > 3 ? ` +${r.pods.length - 3} more` : ''}`));
 
-          // Show top 3 critical/high vulns per image
-          const topVulns = r.vulns
-            .filter((v) => v.severity === 'CRITICAL' || v.severity === 'HIGH')
-            .slice(0, 3);
-          topVulns.forEach((v) => {
-            const vc = v.severity === 'CRITICAL' ? chalk.red : chalk.hex('#ff6b35');
-            const fix = v.fixed ? chalk.green(` → fix: ${v.fixed}`) : chalk.dim(' (no fix)');
-            console.log(`    ${vc(v.id)}  ${chalk.white(v.pkg)}@${v.installed}${fix}`);
-          });
+          if (opts.detailed) {
+            // Group by severity for readable output
+            const bySev = { CRITICAL: [], HIGH: [], MEDIUM: [], LOW: [] };
+            for (const v of r.vulns) { (bySev[v.severity] ?? bySev.LOW).push(v); }
+
+            for (const [sev, list] of Object.entries(bySev)) {
+              if (list.length === 0) continue;
+              const vc = sevColor[sev] ?? chalk.dim;
+              console.log(chalk.dim(`\n    ── ${sev} (${list.length}) ──`));
+              list.forEach((v) => {
+                const fix = v.fixed ? chalk.green(` → fix: ${v.fixed}`) : chalk.dim(' (no fix)');
+                console.log(`    ${vc(v.id)}  ${chalk.white(v.pkg)}@${v.installed}${fix}`);
+              });
+            }
+          } else {
+            // Default: top 3 critical/high only
+            const topVulns = r.vulns
+              .filter((v) => v.severity === 'CRITICAL' || v.severity === 'HIGH')
+              .slice(0, 3);
+            topVulns.forEach((v) => {
+              const vc = v.severity === 'CRITICAL' ? chalk.red : chalk.hex('#ff6b35');
+              const fix = v.fixed ? chalk.green(` → fix: ${v.fixed}`) : chalk.dim(' (no fix)');
+              console.log(`    ${vc(v.id)}  ${chalk.white(v.pkg)}@${v.installed}${fix}`);
+            });
+            const remaining = r.critical + r.high - topVulns.length;
+            if (remaining > 0) console.log(chalk.dim(`    ... and ${remaining} more critical/high CVEs — use --detailed to see all`));
+          }
         });
       }
 
-      // --output: save markdown report
+      // --output: save full markdown report (all CVEs, no cap)
       if (opts.output) {
+        const totalMedium = results.reduce((s, r) => s + r.medium, 0);
+        const totalLow    = results.reduce((s, r) => s + r.low, 0);
         const lines = [
           `# nxs Cluster Security Report`,
-          `**Date:** ${new Date().toISOString()}`,
-          `**Namespace:** ${opts.namespace || 'all'}`,
-          `**Images scanned:** ${results.length}  |  **Affected:** ${affected}  |  **CRITICAL:** ${totalCritical}  |  **HIGH:** ${totalHigh}`,
+          ``,
+          `| Field | Value |`,
+          `|-------|-------|`,
+          `| **Date** | ${new Date().toISOString()} |`,
+          `| **Namespace** | ${opts.namespace || 'all'} |`,
+          `| **Severity filter** | ${opts.severity} |`,
+          `| **Images scanned** | ${results.length} |`,
+          `| **Images affected** | ${affected} |`,
+          `| **Images clean** | ${clean} |`,
+          `| **Scan errors** | ${errored} |`,
+          `| **Total CRITICAL** | ${totalCritical} |`,
+          `| **Total HIGH** | ${totalHigh} |`,
+          `| **Total MEDIUM** | ${totalMedium} |`,
+          `| **Total LOW** | ${totalLow} |`,
           '',
           '## Image Summary',
           '',
-          '| Image | CRITICAL | HIGH | MEDIUM | LOW | Pods |',
-          '|-------|----------|------|--------|-----|------|',
-          ...results.map((r) => `| \`${r.image}\` | ${r.critical} | ${r.high} | ${r.medium} | ${r.low} | ${r.pods.slice(0, 2).join(', ')} |`),
+          '| Status | Image | CRITICAL | HIGH | MEDIUM | LOW | Pods |',
+          '|--------|-------|----------|------|--------|-----|------|',
+          ...results.map((r) => {
+            const status = r.scanError ? '❌ ERROR' : r.total === 0 ? '✅ CLEAN' : `⚠️ ${r.worstSev}`;
+            return `| ${status} | \`${r.image}\` | ${r.critical} | ${r.high} | ${r.medium} | ${r.low} | ${r.pods.slice(0, 2).join(', ')} |`;
+          }),
           '',
           '## Detailed Findings',
           '',
-          ...results.filter((r) => r.total > 0).flatMap((r) => [
-            `### ${r.image}`,
-            `Used by: ${r.pods.join(', ')}`,
-            '',
-            '| CVE | Package | Installed | Fixed | Severity |',
-            '|-----|---------|-----------|-------|----------|',
-            ...r.vulns.slice(0, 20).map((v) => `| ${v.id} | ${v.pkg} | ${v.installed} | ${v.fixed || 'no fix'} | ${v.severity} |`),
+          ...results.filter((r) => r.total > 0).flatMap((r) => {
+            const bySev = { CRITICAL: [], HIGH: [], MEDIUM: [], LOW: [] };
+            for (const v of r.vulns) { (bySev[v.severity] ?? bySev.LOW).push(v); }
+            const sections = [];
+            for (const [sev, list] of Object.entries(bySev)) {
+              if (list.length === 0) continue;
+              sections.push(
+                `#### ${sev} (${list.length})`,
+                '',
+                '| CVE | Package | Installed | Fixed |',
+                '|-----|---------|-----------|-------|',
+                ...list.map((v) => `| ${v.id} | \`${v.pkg}\` | ${v.installed} | ${v.fixed || '—'} |`),
+                '',
+              );
+            }
+            return [
+              `### \`${r.image}\``,
+              `**Used by:** ${r.pods.join(', ')}  |  C:${r.critical} H:${r.high} M:${r.medium} L:${r.low}`,
+              '',
+              ...sections,
+            ];
+          }),
+          ...results.filter((r) => r.scanError).flatMap((r) => [
+            `### ❌ \`${r.image}\` — scan error`,
+            `**Error:** ${r.scanError}`,
+            `**Used by:** ${r.pods.join(', ')}`,
             '',
           ]),
         ];
