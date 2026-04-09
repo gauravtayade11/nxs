@@ -20,8 +20,8 @@ import { registerServe }   from './tools/serve.js';
 import { registerRbac }    from './tools/rbac.js';
 import { registerStatus, registerK8sStatus, registerDevopsPipelines } from './tools/status.js';
 
-// Load .env then persisted config
-config({ path: resolve(process.cwd(), '.env') });
+// Load .env then persisted config (quiet: true suppresses dotenv v17 promo output)
+config({ path: resolve(process.cwd(), '.env'), quiet: true });
 applyConfig();
 
 // ── Root program ───────────────────────────────────────────────────────────
