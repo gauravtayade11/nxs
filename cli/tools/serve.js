@@ -8,6 +8,7 @@
  *   GET  /history                 → ?tool=k8s&limit=20
  *   DELETE /history               → clear all history
  *   POST /webhook/alertmanager    → Prometheus Alertmanager → analyze → Slack
+ *   POST /webhook/github          → GitHub Actions failure → analyze → Slack
  *   GET  /report                  → ?days=7 → markdown digest
  */
 import { createServer } from 'node:http';
@@ -95,7 +96,7 @@ function handleInfo(req, res) {
     version: VERSION,
     tools: VALID_TOOLS,
     history_count: history.length,
-    docs: 'POST /analyze  |  GET /history  |  POST /webhook/alertmanager  |  GET /report',
+    docs: 'POST /analyze  |  GET /history  |  POST /webhook/alertmanager  |  POST /webhook/github  |  GET /report',
   });
 }
 
@@ -202,6 +203,64 @@ async function handleAlertmanager(req, res) {
   send(res, 200, { processed: results.length, results });
 }
 
+async function handleGithubWebhook(req, res) {
+  let body;
+  try { body = await readBody(req); } catch (e) { send(res, 400, { error: e.message }); return; }
+
+  const event = req.headers['x-github-event'];
+
+  // Only care about workflow_run completions that failed
+  if (event !== 'workflow_run' || body.action !== 'completed') {
+    send(res, 200, { message: `Ignored: ${event}/${body.action ?? 'unknown'}` });
+    return;
+  }
+
+  const run = body.workflow_run ?? {};
+  if (run.conclusion !== 'failure') {
+    send(res, 200, { message: `Run ${run.id} concluded: ${run.conclusion} — no action needed.` });
+    return;
+  }
+
+  // Build a synthetic log from the workflow_run payload
+  const logText = [
+    `GitHub Actions workflow failed`,
+    `Workflow: ${run.name}`,
+    `Run ID: ${run.id}`,
+    `Branch: ${run.head_branch}`,
+    `Commit: ${run.head_sha?.slice(0, 8)}`,
+    `Triggered by: ${run.triggering_actor?.login ?? 'unknown'}`,
+    `Run URL: ${run.html_url}`,
+    `Failed jobs: ${(run.jobs_url ?? '')}`,
+    `Conclusion: ${run.conclusion}`,
+    `Started: ${run.run_started_at}`,
+  ].join('\n');
+
+  const CI_PROMPT = TOOL_PROMPTS.ci;
+
+  try {
+    const result = await analyze(logText, CI_PROMPT, () => ({
+      tool: 'github-actions', severity: 'critical',
+      pipeline: run.name,
+      step: 'unknown — see run URL',
+      summary: `GitHub Actions workflow "${run.name}" failed on branch ${run.head_branch}.`,
+      rootCause: `Run ${run.id} concluded with: ${run.conclusion}. Check the run URL for details.`,
+      fixSteps: `1. Open the run: ${run.html_url}\n2. Identify the failed step\n3. Fix and re-push.`,
+      commands: `gh run view ${run.id} --log-failed\ngh run rerun ${run.id} --failed`,
+    }));
+
+    addHistory('ci', logText, result);
+
+    const slackUrl = process.env.SLACK_WEBHOOK_URL;
+    if (slackUrl) {
+      await postSlack(result, `github-actions/${run.name}`, slackUrl, run.html_url).catch(() => {});
+    }
+
+    send(res, 200, { processed: 1, run_id: run.id, result });
+  } catch (e) {
+    send(res, 500, { error: 'Analysis failed', detail: e.message });
+  }
+}
+
 function handleReport(req, res) {
   const url = new URL(req.url, 'http://localhost');
   const days = Math.min(Number.parseInt(url.searchParams.get('days') ?? '7', 10), 90);
@@ -258,7 +317,7 @@ function buildReport(entries, days) {
 
 // ── Slack helper ─────────────────────────────────────────────────────────────
 
-async function postSlack(result, source, webhookUrl) {
+async function postSlack(result, source, webhookUrl, runUrl = null) {
   const sev = result.severity ?? 'unknown';
   const sevEmoji = { critical: '🔴', warning: '🟡', info: '🟢' }[sev] ?? '⚪';
   const sevColor = { critical: '#e74c3c', warning: '#f39c12', info: '#2ecc71' }[sev] ?? '#95a5a6';
@@ -274,6 +333,7 @@ async function postSlack(result, source, webhookUrl) {
           { type: 'section', text: { type: 'mrkdwn', text: `*Summary*\n${String(result.summary ?? '').slice(0, 500)}` } },
           { type: 'section', text: { type: 'mrkdwn', text: `*Root Cause*\n${String(result.rootCause ?? '').slice(0, 500)}` } },
           ...(result.commands ? [{ type: 'section', text: { type: 'mrkdwn', text: `*Fix Commands*\n\`\`\`${String(result.commands).slice(0, 400)}\`\`\`` } }] : []),
+          ...(runUrl ? [{ type: 'section', text: { type: 'mrkdwn', text: `*Run URL*\n${runUrl}` } }] : []),
           { type: 'context', elements: [{ type: 'mrkdwn', text: `nxs serve · ${new Date().toISOString()}` }] },
         ],
       }],
@@ -296,17 +356,27 @@ Endpoints:
   POST /analyze                  Analyze a log  { tool, log }
   GET  /history                  Past analyses  ?tool=k8s&limit=20
   DELETE /history                Clear all history
-  POST /webhook/alertmanager     Prometheus Alertmanager webhook
+  POST /webhook/alertmanager     Prometheus Alertmanager → analyze → Slack
+  POST /webhook/github           GitHub Actions failure → analyze → Slack
   GET  /report                   Digest  ?days=7
 
-CI/CD usage:
-  # GitHub Actions
-  - run: gh run view \${{ github.run_id }} --log-failed | curl -s -X POST http://nxs:4000/analyze -H "Content-Type: application/json" -d @-
+GitHub Actions — auto-notify on failure (add to .github/workflows/ci.yml):
+  notify-failure:
+    needs: [lint, smoke-test]
+    if: failure()
+    steps:
+      - run: |
+          gh run view \${{ github.run_id }} --log-failed | \\
+          node cli/index.js ci analyze --stdin --notify slack --no-chat --json
+        env:
+          SLACK_WEBHOOK_URL: \${{ secrets.SLACK_WEBHOOK_URL }}
+          GROQ_API_KEY: \${{ secrets.GROQ_API_KEY }}
+          GH_TOKEN: \${{ github.token }}
 
-  # Inline
-  curl -s -X POST http://localhost:4000/analyze \\
-    -H "Content-Type: application/json" \\
-    -d '{"tool":"k8s","log":"CrashLoopBackOff: pod restarting..."}'
+GitHub webhook (Settings → Webhooks → add):
+  Payload URL:  http://<your-nxs-server>:4000/webhook/github
+  Content type: application/json
+  Events:       Workflow runs
 
 Alertmanager config:
   receivers:
@@ -338,6 +408,7 @@ Alertmanager config:
           else if (method === 'GET'    && path === '/history')        { handleHistory(req, res); }
           else if (method === 'DELETE' && path === '/history')        { await handleHistoryClear(req, res); }
           else if (method === 'POST'   && path === '/webhook/alertmanager') { await handleAlertmanager(req, res); }
+          else if (method === 'POST'   && path === '/webhook/github')       { await handleGithubWebhook(req, res); }
           else if (method === 'GET'    && path === '/report')         { handleReport(req, res); }
           else { send(res, 404, { error: `No route: ${method} ${path}` }); }
         } catch (e) {
@@ -357,7 +428,8 @@ Alertmanager config:
           ['POST',   '/analyze',                '{ tool, log } → analysis JSON'],
           ['GET',    '/history',                'Past analyses  ?tool=k8s&limit=20'],
           ['DELETE', '/history',                'Clear all history'],
-          ['POST',   '/webhook/alertmanager',   'Prometheus Alertmanager webhook'],
+          ['POST',   '/webhook/alertmanager',   'Prometheus Alertmanager → analyze → Slack'],
+          ['POST',   '/webhook/github',         'GitHub Actions failure → analyze → Slack'],
           ['GET',    '/report',                 'Digest  ?days=7'],
         ];
         endpoints.forEach(([m, p, d]) => {

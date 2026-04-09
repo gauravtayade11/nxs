@@ -122,13 +122,23 @@ Examples:
         }
         if (!opts.json) console.log(chalk.dim(`  Fetching GitHub Actions run: ${chalk.white(opts.run)}\n`));
 
-        const { stdout, ok } = await run(`gh run view ${opts.run} --log-failed 2>/dev/null`, { timeout: 30000 });
-        if (!ok || !stdout.trim()) {
-          console.error(chalk.red(`  Could not fetch run ${opts.run}. Check the run ID and gh auth.`));
-          console.error(chalk.dim('  Run: gh auth status'));
-          process.exit(1);
+        // Try failed-only log first; fall back to full log for passing runs
+        let logOutput = '';
+        const { stdout: failedLog, ok } = await run(`gh run view ${opts.run} --log-failed 2>/dev/null`, { timeout: 30000 });
+        if (ok && failedLog.trim()) {
+          logOutput = failedLog;
+        } else {
+          // Run may have passed — fetch full log (first 500 lines)
+          const { stdout: fullLog, ok: fullOk } = await run(`gh run view ${opts.run} --log 2>/dev/null`, { timeout: 30000 });
+          if (!fullOk || !fullLog.trim()) {
+            console.error(chalk.red(`  Could not fetch run ${opts.run}. Check the run ID and gh auth.`));
+            console.error(chalk.dim('  Run: gh auth status'));
+            process.exit(1);
+          }
+          logOutput = fullLog.split('\n').slice(0, 500).join('\n');
+          if (!opts.json) console.log(chalk.dim('  (Run passed — showing full log for context)\n'));
         }
-        await runAnalyze('ci', SYSTEM_PROMPT, mockAnalyze, null, { ...opts, _injected: stdout });
+        await runAnalyze('ci', SYSTEM_PROMPT, mockAnalyze, null, { ...opts, _injected: logOutput });
         return;
       }
 
