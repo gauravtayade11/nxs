@@ -68,7 +68,7 @@ program
     console.log(chalk.hex('#94a3b8')('  AI-powered DevOps & Cloud debugger.\n'));
     console.log(chalk.hex('#94a3b8')('  Paste any error log — Kubernetes, Docker, CI/CD, AWS, GCP, Azure,'));
     console.log(chalk.hex('#94a3b8')('  Terraform — and instantly get root cause + fix commands.\n'));
-    console.log(chalk.hex('#94a3b8')('  Two interfaces: a web app (localhost:5173) and this CLI.\n'));
+    console.log(chalk.hex('#94a3b8')('  Pipe any log, get AI root cause + fix. Notify Slack. Integrate with\n  Prometheus Alertmanager. Run as a REST API for your team.\n'));
 
     // ── Tools ──
     console.log(hr());
@@ -163,6 +163,24 @@ program
         ],
       },
       {
+        name: 'nxs rbac', color: chalk.hex('#e17055'),
+        tagline: 'Kubernetes RBAC scanner',
+        features: [
+          ['scan',                     'Scan cluster for RBAC misconfigs — cluster-admin, wildcards, anonymous'],
+          ['scan -n <namespace>',      'Scan specific namespace'],
+          ['scan --fail-on critical',  'Exit 1 if critical findings (use in CI)'],
+        ],
+      },
+      {
+        name: 'nxs serve', color: chalk.hex('#00cec9'),
+        tagline: 'REST API server — team & Alertmanager integration',
+        features: [
+          ['--port 4000',              'Start API server  POST /analyze  GET /history  GET /report'],
+          ['',                         'POST /webhook/alertmanager — Prometheus → AI → Slack'],
+          ['',                         'POST /webhook/github       — CI failure → AI → Slack'],
+        ],
+      },
+      {
         name: 'nxs status', color: chalk.cyan,
         tagline: 'Live dashboard',
         features: [
@@ -190,19 +208,17 @@ program
 
     const examples = [
       ['Debug a crashing pod',          'kubectl logs my-pod --previous | nxs k8s debug --stdin'],
-      ['Debug a Docker build failure',  'docker build . 2>&1 | nxs devops analyze --stdin'],
-      ['Debug failed GitHub Actions',   'gh run view <id> --log-failed | nxs devops analyze --stdin'],
-      ['Debug an AWS error',            'aws s3 cp f.txt s3://bucket/ 2>&1 | nxs cloud diagnose --stdin'],
-      ['Debug Terraform apply',         'terraform apply 2>&1 | nxs devops analyze --stdin'],
-      ['Watch pods live',               'nxs k8s pods --watch'],
-      ['Full infra snapshot',           'nxs status'],
-      ['Scan image for CVEs',           'trivy image myapp:latest | nxs sec scan --stdin'],
-      ['Diagnose network failure',      'curl -v https://api.internal 2>&1 | nxs net diagnose --stdin'],
-      ['Debug DB connection error',     'kubectl logs my-db-pod | nxs db diagnose --stdin'],
-      ['Analyze GitHub Actions failure','nxs ci analyze --run 12345'],
-      ['Explain any K8s error',         'nxs explain CrashLoopBackOff'],
+      ['Debug + notify Slack',          'kubectl logs my-pod --previous | nxs k8s debug --stdin --notify slack'],
+      ['Docker build failure',          'docker build . 2>&1 | nxs devops analyze --stdin'],
+      ['Terraform apply error',         'terraform apply 2>&1 | nxs devops analyze --stdin'],
+      ['GitHub Actions failure',        'nxs ci analyze --run 12345'],
+      ['Scan cluster images for CVEs',  'nxs sec cluster -n production --detailed'],
+      ['RBAC audit',                    'nxs rbac scan --fail-on critical'],
       ['Watch pod logs live',           'nxs watch "kubectl logs -f my-pod" --notify slack'],
-      ['Analyze CI failure + Slack',    'gh run view 123 --log-failed | nxs ci analyze --stdin --notify slack'],
+      ['Explain any error',             'nxs explain OOMKilled'],
+      ['Full infra snapshot',           'nxs status'],
+      ['Start team API server',         'NXS_API_KEY=secret nxs serve --port 4000'],
+      ['Weekly digest',                 'nxs report --days 7'],
     ];
 
     examples.forEach(([label, cmd]) => {
@@ -215,6 +231,8 @@ program
 
     const global_cmds = [
       ['nxs history',              'All past analyses across all tools'],
+      ['nxs history --search oom', 'Search history by keyword'],
+      ['nxs report --days 7',      'Weekly digest of all analyses'],
       ['nxs config --setup',       'Interactive API key wizard'],
       ['nxs config --set KEY=val', 'Set a key directly'],
       ['nxs info',                 'This screen'],
@@ -237,21 +255,6 @@ program
 
     console.log(chalk.dim(`  Run:  nxs config --setup   to add a key\n`));
 
-    // ── What's not built yet ──
-    console.log(hr());
-    console.log(chalk.bold('\n  Possible next features:\n'));
-
-    const next = [
-      'nxs devops watch <file>   — tail a live log, auto-analyze on error',
-      'nxs devops scan <dir>     — scan all .log files in a folder',
-      '--output report.md        — save analysis to file',
-      'Slack/webhook alert       — post result after CI failure',
-      'nxs sec                   — Trivy/Grype scan output analysis',
-      'nxs net                   — DNS, cert expiry, connectivity diagnosis',
-    ];
-
-    next.forEach((n) => console.log(chalk.dim('  › ') + chalk.hex('#64748b')(n)));
-    console.log('');
     console.log(hr() + '\n');
   });
 
