@@ -42,6 +42,7 @@ export function addHistory(toolModule, logText, result) {
     timestamp: new Date().toISOString(),
     toolModule,
     tool: result.tool,
+    severity: result.severity ?? 'info',
     summary: result.summary,
     logPreview: logText.slice(0, 200),
     result,
