@@ -116,9 +116,10 @@ program
         name: 'nxs db', color: chalk.hex('#f4a261'),
         tagline: 'PostgreSQL · MySQL · MongoDB · Redis',
         features: [
-          ['diagnose <file/--stdin>', 'Analyze database errors and connection failures'],
-          ['diagnose --interactive',  'Paste error manually'],
-          ['errors',                  'Common DB error reference card'],
+          ['diagnose <file/--stdin>',              'Analyze database errors and connection failures'],
+          ['connections --pod <name> [-n <ns>]',   'Live connection monitor — auto-kill idle on threshold'],
+          ['connections --pod <name> --watch',     'Keep watching, auto-kill every N seconds'],
+          ['errors',                               'Common DB error reference card'],
         ],
       },
       {

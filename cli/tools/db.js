@@ -5,6 +5,7 @@
 import chalk from 'chalk';
 import { printBanner, hr } from '../core/ui.js';
 import { runAnalyze, runHistory } from '../core/runner.js';
+import { run } from '../core/exec.js';
 
 const SYSTEM_PROMPT = `You are a senior database administrator (DBA) with expertise in PostgreSQL, MySQL, MongoDB, Redis, and SQLite. Analyze the provided database error, slow query log, or connection failure output.
 
@@ -130,6 +131,179 @@ Examples:
     .action(async (file, opts) => {
       if (!opts.json) printBanner('Database error analyzer');
       await runAnalyze('db', SYSTEM_PROMPT, mockAnalyze, file, opts);
+    });
+
+  db
+    .command('connections')
+    .description('Monitor PostgreSQL connections — auto-kill idle when threshold hit')
+    .option('--pod <name>',         'Postgres pod name (kubectl exec)')
+    .option('--ns, --namespace <ns>','Namespace for --pod (default: default)')
+    .option('--url <url>',          'Connection string: postgresql://user:pass@host:5432/db')
+    .option('--threshold <n>',      'Kill idle connections when total exceeds this (default: 80%)', '80')
+    .option('--idle-after <mins>',  'Kill connections idle longer than N minutes (default: 10)', '10')
+    .option('--watch',              'Keep watching — refresh every 10s, auto-kill on threshold')
+    .option('--dry-run',            'Show what would be killed without actually killing')
+    .option('--interval <secs>',    'Watch interval in seconds (default: 10)', '10')
+    .addHelpText('after', `
+Examples:
+  $ nxs db connections --pod my-postgres-pod -n production
+  $ nxs db connections --pod my-postgres-pod -n production --watch
+  $ nxs db connections --pod my-postgres-pod -n production --watch --threshold 70 --idle-after 5
+  $ nxs db connections --pod my-postgres-pod -n production --dry-run`)
+    .action(async (opts) => {
+      printBanner('Database connection monitor');
+
+      if (!opts.pod && !opts.url) {
+        console.error(chalk.red('  Provide --pod <name> or --url <connection-string>'));
+        console.error(chalk.dim('  Example: nxs db connections --pod my-postgres -n production'));
+        process.exit(1);
+      }
+
+      const ns        = opts.namespace ? `-n ${opts.namespace}` : '';
+      const threshold = Number.parseInt(opts.threshold, 10);
+      const idleAfter = Number.parseInt(opts.idleAfter, 10);
+      const interval  = Number.parseInt(opts.interval, 10) * 1000;
+
+      // Build the psql runner
+      const psql = async (sql) => {
+        if (opts.pod) {
+          const { stdout, stderr } = await run(
+            `kubectl exec ${opts.pod} ${ns} -- psql -U postgres -t -c "${sql.replace(/"/g, '\\"')}" 2>/dev/null`
+          );
+          return (stdout || stderr || '').trim();
+        }
+        const { stdout, stderr } = await run(`psql "${opts.url}" -t -c "${sql.replace(/"/g, '\\"')}" 2>/dev/null`);
+        return (stdout || stderr || '').trim();
+      };
+
+      // Verify connection
+      const pingResult = await psql('SELECT 1');
+      if (!pingResult.includes('1')) {
+        console.error(chalk.red(`  Cannot connect to PostgreSQL.`));
+        if (opts.pod) console.error(chalk.dim(`  Check pod name and namespace: kubectl get pods ${ns}`));
+        else console.error(chalk.dim('  Check your connection string.'));
+        process.exit(1);
+      }
+
+      const tick = async () => {
+        // Clear screen on watch
+        if (opts.watch) process.stdout.write('\x1Bc');
+        printBanner('Database connection monitor');
+
+        // Get max_connections
+        const maxRaw = await psql('SHOW max_connections');
+        const maxConn = Number.parseInt(maxRaw, 10) || 100;
+        const killThreshold = Math.floor(maxConn * threshold / 100);
+
+        // Get connection breakdown
+        const statsRaw = await psql(`
+          SELECT state, count(*) as cnt
+          FROM pg_stat_activity
+          WHERE pid <> pg_backend_pid()
+          GROUP BY state
+          ORDER BY cnt DESC
+        `);
+
+        const stats = {};
+        statsRaw.split('\n').filter(Boolean).forEach((row) => {
+          const parts = row.trim().split('|').map((s) => s.trim());
+          if (parts.length === 2) stats[parts[0] || 'null'] = Number.parseInt(parts[1], 10);
+        });
+
+        const total   = Object.values(stats).reduce((a, b) => a + b, 0);
+        const active  = stats['active']  || 0;
+        const idle    = stats['idle']    || 0;
+        const waiting = stats['idle in transaction'] || 0;
+        const pct     = Math.round((total / maxConn) * 100);
+
+        // Get top idle connections with duration
+        const idleRaw = await psql(`
+          SELECT pid, usename, application_name,
+                 round(extract(epoch from (now()-query_start))/60)::int AS idle_mins,
+                 left(query, 60) AS last_query
+          FROM pg_stat_activity
+          WHERE state = 'idle'
+          AND pid <> pg_backend_pid()
+          ORDER BY query_start ASC
+          LIMIT 15
+        `);
+
+        const idleConns = idleRaw.split('\n').filter(Boolean).map((row) => {
+          const [pid, user, app, mins, query] = row.split('|').map((s) => s.trim());
+          return { pid, user, app, mins: Number.parseInt(mins, 10) || 0, query };
+        }).filter((r) => r.pid);
+
+        // ─── Print dashboard ──────────────────────────────────────────
+        const barFill   = Math.round(pct / 5);
+        const barColor  = pct >= threshold ? chalk.red : pct >= 60 ? chalk.yellow : chalk.green;
+        const bar       = barColor('█'.repeat(barFill)) + chalk.dim('░'.repeat(20 - barFill));
+
+        console.log(chalk.bold('\n  CONNECTION POOL\n'));
+        console.log(hr());
+        console.log(`\n  Max connections : ${chalk.white(maxConn)}`);
+        console.log(`  Total used      : ${barColor.bold(total)} / ${maxConn}  [${bar}] ${barColor.bold(pct + '%')}`);
+        console.log(`  Active          : ${chalk.cyan(active)}`);
+        console.log(`  Idle            : ${idle > 0 ? chalk.yellow(idle) : chalk.dim(idle)}`);
+        console.log(`  Idle in txn     : ${waiting > 0 ? chalk.red(waiting) : chalk.dim(waiting)}`);
+        console.log(`  Kill threshold  : ${chalk.dim(threshold + '% = ' + killThreshold + ' connections')}`);
+
+        if (opts.watch) {
+          console.log(chalk.dim(`\n  Auto-refresh: every ${opts.interval}s  |  Ctrl+C to stop`));
+        }
+
+        if (idleConns.length > 0) {
+          const toKill = idleConns.filter((c) => c.mins >= idleAfter);
+          console.log(chalk.bold(`\n  IDLE CONNECTIONS (${idleConns.length} total)\n`));
+          console.log(hr());
+          console.log(chalk.dim(`\n  ${'PID'.padEnd(8)} ${'User'.padEnd(16)} ${'Idle (min)'.padEnd(12)} Last query`));
+          idleConns.forEach((c) => {
+            const stale = c.mins >= idleAfter;
+            const pidStr  = (stale ? chalk.red : chalk.dim)(c.pid.padEnd(8));
+            const userStr = chalk.white(c.user?.padEnd(16) ?? '?'.padEnd(16));
+            const minStr  = (stale ? chalk.red.bold : chalk.yellow)((c.mins + ' min').padEnd(12));
+            const qStr    = chalk.dim(c.query?.slice(0, 50) ?? '');
+            console.log(`  ${pidStr} ${userStr} ${minStr} ${qStr}`);
+          });
+
+          // ─── Auto-kill logic ───────────────────────────────────────
+          if (total >= killThreshold && toKill.length > 0) {
+            console.log();
+            if (opts.dryRun) {
+              console.log(chalk.yellow(`\n  ⚠  DRY RUN — would kill ${toKill.length} idle connection(s) (idle > ${idleAfter}min)\n`));
+              toKill.forEach((c) => console.log(chalk.dim(`    PID ${c.pid} — ${c.user} — idle ${c.mins}min`)));
+            } else {
+              console.log(chalk.red(`\n  ⚡ THRESHOLD HIT (${total}/${maxConn} = ${pct}%) — killing ${toKill.length} idle connection(s)\n`));
+              const pids = toKill.map((c) => c.pid).join(', ');
+              const killSql = `SELECT pid, pg_terminate_backend(pid) FROM pg_stat_activity WHERE pid IN (${pids})`;
+              const killResult = await psql(killSql);
+              toKill.forEach((c) => {
+                console.log(chalk.green(`    ✓ Killed PID ${c.pid} — ${c.user} — idle ${c.mins}min`));
+              });
+              console.log(chalk.dim(`\n    Killed ${toKill.length} idle connection(s). Pool should recover.\n`));
+            }
+          } else if (total >= killThreshold && toKill.length === 0) {
+            console.log(chalk.yellow(`\n  ⚠  Threshold hit but no connections idle > ${idleAfter}min yet.\n`));
+          } else {
+            console.log(chalk.green(`\n  ✓  Pool healthy — below threshold (${total}/${killThreshold})\n`));
+          }
+        } else {
+          console.log(chalk.green('\n  ✓  No idle connections.\n'));
+        }
+
+        console.log(hr());
+        console.log(chalk.dim(`\n  Tip: nxs db connections --pod ${opts.pod || 'my-pod'} --watch --threshold ${threshold} --idle-after ${idleAfter}\n`));
+      };
+
+      // Run once or loop
+      await tick();
+
+      if (opts.watch) {
+        process.on('SIGINT', () => {
+          console.log(chalk.dim('\n  Stopped watching.\n'));
+          process.exit(0);
+        });
+        setInterval(tick, interval);
+      }
     });
 
   db
