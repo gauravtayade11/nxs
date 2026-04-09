@@ -48,6 +48,7 @@ export function registerBlame(program) {
     .description('Correlate what changed before a breakage — git + k8s + deploy timeline')
     .option('--since <duration>', 'How far back to look (e.g. 1h, 30m, 2h)', '1h')
     .option('-n, --namespace <ns>', 'Kubernetes namespace to scan events')
+    .option('--repo <path>', 'Path to the application git repo (default: current directory)')
     .option('--no-git', 'Skip git log')
     .option('--no-k8s', 'Skip kubectl events')
     .option('--no-ai', 'Skip AI analysis — just print timeline')
@@ -55,9 +56,9 @@ export function registerBlame(program) {
     .addHelpText('after', `
 Examples:
   $ nxs blame
-  $ nxs blame --since 2h
-  $ nxs blame --since 30m -n production
-  $ nxs blame --no-ai`)
+  $ nxs blame --since 2h -n production
+  $ nxs blame --since 30m --repo /path/to/your-app -n production
+  $ nxs blame --no-ai --no-git   # k8s events only`)
     .action(async (opts) => {
       const windowMs  = parseDuration(opts.since ?? '1h');
       const since     = new Date(Date.now() - windowMs);
@@ -75,8 +76,9 @@ Examples:
       // ── Git log ──
       if (opts.git !== false) {
         const spinner = opts.json ? null : ora('Fetching git log…').start();
+        const repoFlag = opts.repo ? `-C ${opts.repo}` : '';
         // Use ISO timestamp so we can sort commits alongside k8s events
-        const gitR = await run(`git log --since="${sinceISO}" --format="%H %aI %s" --no-merges 2>/dev/null`);
+        const gitR = await run(`git ${repoFlag} log --since="${sinceISO}" --format="%H %aI %s" --no-merges 2>/dev/null`);
         spinner?.stop();
         if (gitR.stdout?.trim()) {
           gitR.stdout.trim().split('\n').forEach((line) => {
