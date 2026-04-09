@@ -1,6 +1,10 @@
 # Logs
 logs
 *.log
+
+# Demo (local only)
+DEMO_PLAN.md
+demo/logs/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
