@@ -1,0 +1,96 @@
+---
+# Step 1: Create secrets
+# kubectl create secret generic nxs-secrets -n monitoring \
+#   --from-literal=GROQ_API_KEY=gsk_... \
+#   --from-literal=SLACK_WEBHOOK_URL=https://hooks.slack.com/... \
+#   --from-literal=NXS_API_KEY=your-secret
+#
+# Or from your .env file:
+# kubectl create secret generic nxs-secrets -n monitoring \
+#   --from-env-file=.env
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nxs-server
+  namespace: monitoring
+  labels:
+    app: nxs-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nxs-server
+  template:
+    metadata:
+      labels:
+        app: nxs-server
+    spec:
+      containers:
+        - name: nxs
+          image: node:20-alpine
+          command:
+            - sh
+            - -c
+            - |
+              apk add --no-cache git && \
+              git clone https://github.com/gauravtayade11/nxs /app && \
+              cd /app && \
+              npm install --omit=dev && \
+              node cli/index.js serve --port 4000 --host 0.0.0.0
+          ports:
+            - containerPort: 4000
+              name: http
+          env:
+            - name: GROQ_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: nxs-secrets
+                  key: GROQ_API_KEY
+            - name: SLACK_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: nxs-secrets
+                  key: SLACK_WEBHOOK_URL
+            - name: NXS_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: nxs-secrets
+                  key: NXS_API_KEY
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 4000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 4000
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nxs-server
+  namespace: monitoring
+  labels:
+    app: nxs-server
+spec:
+  selector:
+    app: nxs-server
+  ports:
+    - name: http
+      port: 4000
+      targetPort: 4000
+  type: ClusterIP
