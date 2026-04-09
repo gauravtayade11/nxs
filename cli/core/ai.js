@@ -58,18 +58,52 @@ export async function analyze(logText, systemPrompt, mockFn) {
     let input = logText;
     let truncated = false;
     if (input.length > GROQ_MAX_CHARS) { input = input.slice(0, GROQ_MAX_CHARS); truncated = true; }
-    const raw = await callGroq(systemPrompt, `Analyze this log:\n\n${input}`);
-    const result = JSON.parse(raw);
-    if (truncated) result._truncated = true;
-    return result;
+    try {
+      const raw = await callGroq(systemPrompt, `Analyze this log:\n\n${input}`);
+      const result = JSON.parse(raw);
+      if (truncated) result._truncated = true;
+      return result;
+    } catch (groqErr) {
+      const msg = groqErr.message ?? '';
+      // Rate limit or quota — fall through to Anthropic/mock
+      const isFallback = msg.includes('rate_limit') || msg.includes('Request too large') ||
+                         msg.includes('quota') || msg.includes('fetch failed') ||
+                         msg.includes('ENOTFOUND') || msg.includes('ECONNREFUSED');
+      if (isFallback) {
+        if (!antKey) {
+          // Fall to mock with a note
+          const result = mockFn(logText);
+          result._warning = `Groq unavailable (${msg.slice(0, 80)}). Showing mock response.`;
+          return result;
+        }
+        // fall through to Anthropic below
+      } else {
+        throw groqErr; // re-throw non-recoverable errors (bad key, server error, bad JSON)
+      }
+    }
   }
 
   if (antKey) {
-    const raw = await callAnthropic(systemPrompt, `Analyze this log:\n\n${logText}`);
-    return JSON.parse(raw);
+    try {
+      const raw = await callAnthropic(systemPrompt, `Analyze this log:\n\n${logText}`);
+      return JSON.parse(raw);
+    } catch (antErr) {
+      const msg = antErr.message ?? '';
+      const isFallback = msg.includes('rate_limit') || msg.includes('overloaded') ||
+                         msg.includes('fetch failed') || msg.includes('ENOTFOUND');
+      if (isFallback) {
+        const result = mockFn(logText);
+        result._warning = `Anthropic unavailable (${msg.slice(0, 80)}). Showing mock response.`;
+        return result;
+      }
+      throw antErr;
+    }
   }
 
-  return mockFn(logText);
+  // No API keys — mock mode
+  const result = mockFn(logText);
+  result._mock = true;
+  return result;
 }
 
 /**

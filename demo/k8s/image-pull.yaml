@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: image-pull-demo
+  namespace: nxs-demo-bad
+  labels:
+    app: image-pull-demo
+    demo: nxs-worst-case
+spec:
+  containers:
+  - name: image-pull-demo
+    image: mycompany/private-app:v99.99.99-does-not-exist
+    resources:
+      limits:
+        memory: "64Mi"
+        cpu: "100m"
+  restartPolicy: Always

@@ -2,9 +2,9 @@
  * Shared command runner — handles input, analysis, chat loop.
  * Each tool module calls this with its own systemPrompt + mockFn.
  */
-import { readFileSync, existsSync, writeFileSync } from 'node:fs';
-import { createInterface }          from 'readline';
-import { resolve }                  from 'path';
+import { readFileSync, existsSync, writeFileSync, statSync } from 'node:fs';
+import { createInterface }          from 'node:readline';
+import { resolve }                  from 'node:path';
 import chalk                        from 'chalk';
 import ora                          from 'ora';
 import { analyze, chat }            from './ai.js';
@@ -37,7 +37,15 @@ export async function runAnalyze(toolModule, systemPrompt, mockFn, file, opts) {
   } else if (file) {
     const fp = resolve(process.cwd(), file);
     if (!existsSync(fp)) { console.error(chalk.red(`  File not found: ${fp}`)); process.exit(1); }
+    const stat = statSync(fp);
+    if (stat.size === 0) { console.error(chalk.red(`  File is empty: ${fp}`)); process.exit(1); }
+    if (stat.size > 512 * 1024) { // 512KB hard limit
+      console.error(chalk.red(`  File too large (${Math.round(stat.size / 1024)}KB). Max 512KB.`));
+      process.exit(1);
+    }
     logText = readFileSync(fp, 'utf8');
+    // Strip non-printable binary characters
+    logText = logText.replace(/[\x00-\x08\x0E-\x1F\x7F]/g, '');
     if (!opts.json) console.log(chalk.dim(`  Input: ${fp} (${logText.length} chars)\n`));
 
   } else {
@@ -69,23 +77,39 @@ export async function runAnalyze(toolModule, systemPrompt, mockFn, file, opts) {
   }
 
   const spinner = ora({ text: 'Analyzing...', color: 'cyan' }).start();
+
+  // Clean Ctrl+C during analysis
+  const onSigint = () => { spinner.stop(); console.log('\n' + chalk.dim('  Interrupted.\n')); process.exit(0); };
+  process.once('SIGINT', onSigint);
+
   let result;
   try {
     result = await analyze(logText, systemPrompt, mockFn);
     spinner.succeed(chalk.green('Analysis complete'));
   } catch (err) {
-    spinner.fail(chalk.red(`Failed: ${err.message}`));
+    spinner.fail(chalk.red(`Analysis failed: ${err.message}`));
+    if (err.message?.includes('ENOTFOUND') || err.message?.includes('fetch failed')) {
+      console.error(chalk.dim('  Check your network connection or try again later.\n'));
+    } else if (err.message?.includes('401') || err.message?.includes('invalid_api_key')) {
+      console.error(chalk.dim('  Invalid API key. Run: nxs config --setup\n'));
+    }
+    process.off('SIGINT', onSigint);
     process.exit(1);
   }
+  process.off('SIGINT', onSigint);
 
   addHistory(toolModule, logText, result);
   printResult(result);
 
   // --output: save full analysis to a markdown file
   if (opts.output) {
-    const md = buildMarkdown(result, logText);
-    writeFileSync(opts.output, md, 'utf8');
-    console.log(chalk.green(`  ✓ Analysis saved to ${opts.output}\n`));
+    try {
+      const md = buildMarkdown(result, logText);
+      writeFileSync(opts.output, md, 'utf8');
+      console.log(chalk.green(`  ✓ Analysis saved to ${opts.output}\n`));
+    } catch (e) {
+      console.error(chalk.red(`  ✗ Could not write output file: ${e.message}\n`));
+    }
   }
 
   // --fail-on: exit 1 if severity matches

@@ -63,6 +63,18 @@ export function printResult(result) {
   const color = TOOL_COLORS[result.tool] ?? chalk.white;
   const icon  = TOOL_ICONS[result.tool]  ?? '⚙  ';
 
+  // Show mock/fallback warning banners
+  if (result._mock) {
+    console.log(chalk.yellow('\n  ⚠  DEMO MODE — no API key set. Add GROQ_API_KEY for real AI analysis.'));
+    console.log(chalk.dim('     Run: nxs config --setup\n'));
+  } else if (result._warning) {
+    console.log(chalk.yellow(`\n  ⚠  ${result._warning}`));
+    console.log(chalk.dim('     Showing approximate response.\n'));
+  }
+  if (result._truncated) {
+    console.log(chalk.dim('  ↳ Input truncated to 8000 chars (Groq free tier limit)\n'));
+  }
+
   console.log('\n' + hr());
   console.log(color.bold(`  ${icon}${(result.tool ?? 'unknown').toUpperCase()} DETECTED`));
   console.log(hr());

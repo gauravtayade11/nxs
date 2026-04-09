@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pending-demo
+  namespace: nxs-demo-bad
+  labels:
+    app: pending-demo
+    demo: nxs-worst-case
+spec:
+  nodeSelector:
+    # This label doesn't exist on any node — pod will stay Pending
+    gpu: "nvidia-a100"
+  containers:
+  - name: pending-demo
+    image: nginx:1.25
+    resources:
+      limits:
+        memory: "64Mi"
+        cpu: "100m"
+  restartPolicy: Always

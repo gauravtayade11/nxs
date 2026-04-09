@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: crash-loop-demo
+  namespace: nxs-demo-bad
+  labels:
+    app: crash-loop-demo
+    demo: nxs-worst-case
+spec:
+  containers:
+  - name: crash-loop-demo
+    image: busybox:1.35
+    command: ["/bin/sh", "-c", "echo 'Starting app...'; sleep 2; echo 'ERROR: config file /etc/app/config.yaml not found'; exit 1"]
+    resources:
+      limits:
+        memory: "64Mi"
+        cpu: "100m"
+  restartPolicy: Always
