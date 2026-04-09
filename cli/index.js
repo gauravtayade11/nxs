@@ -99,6 +99,7 @@ program
           ['scan <file/--stdin>',      'Analyze Trivy, Grype, Snyk, OWASP scan output'],
           ['scan --image <name>',      'Scan a Docker image directly (requires trivy)'],
           ['scan --pod <name>',        'Auto-detect pod image and scan it'],
+          ['cluster [-n <namespace>]', 'Scan ALL images running in the cluster'],
           ['severities',              'CVE severity reference card'],
         ],
       },
