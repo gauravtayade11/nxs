@@ -95,7 +95,51 @@ Examples:
 
       const risks = [];
 
-      // ── Pod resource usage vs limits ──
+      // ── Restart counts — always check, does not need metrics-server ──
+      if (podsR.stdout?.trim()) {
+        let podSpecs = [];
+        try { podSpecs = JSON.parse(podsR.stdout).items ?? []; } catch { /* ignore */ }
+
+        for (const spec of podSpecs) {
+          const podName  = spec.metadata?.name ?? '';
+          const podNs    = spec.metadata?.namespace ?? '';
+          const restarts = spec.status?.containerStatuses?.reduce((s, c) => s + (c.restartCount ?? 0), 0) ?? 0;
+
+          // Flag any pod not in Running/Succeeded phase
+          const phase = spec.status?.phase ?? '';
+          const containerStatuses = spec.status?.containerStatuses ?? [];
+          for (const cs of containerStatuses) {
+            const reason = cs.state?.waiting?.reason ?? cs.state?.terminated?.reason ?? '';
+            if (['CrashLoopBackOff', 'OOMKilled', 'Error', 'ImagePullBackOff', 'ErrImagePull', 'CreateContainerError'].includes(reason)) {
+              risks.push({
+                type: 'pod-state', severity: reason === 'OOMKilled' || reason === 'CrashLoopBackOff' ? 'critical' : 'warning',
+                resource: `pod/${podName}`, namespace: podNs,
+                metric: reason,
+                detail: cs.state?.waiting?.message ?? reason,
+                risk: reason === 'OOMKilled' ? 'Will OOMKill again without memory increase' : `Container stuck in ${reason}`,
+                timeframe: 'now',
+                score: reason === 'OOMKilled' || reason === 'CrashLoopBackOff' ? 95 : 75,
+                recommendation: `kubectl logs ${podName} -n ${podNs} --previous`,
+              });
+            }
+          }
+
+          if (restarts >= 5) {
+            risks.push({
+              type: 'pod-restarts', severity: restarts >= 20 ? 'critical' : 'warning',
+              resource: `pod/${podName}`, namespace: podNs,
+              metric: `${restarts} restarts`,
+              detail: `High restart count — recurring crash`,
+              risk: 'CrashLoopBackOff imminent',
+              timeframe: 'recurring',
+              score: Math.min(restarts * 2, 100),
+              recommendation: `kubectl logs ${podName} -n ${podNs} --previous`,
+            });
+          }
+        }
+      }
+
+      // ── Pod resource usage vs limits (requires metrics-server) ──
       if (topPodsR.stdout?.trim() && podsR.stdout?.trim()) {
         let podSpecs = [];
         try { podSpecs = JSON.parse(podsR.stdout).items ?? []; } catch { /* ignore */ }
@@ -110,18 +154,16 @@ Examples:
           if (!spec) continue;
 
           const containers = spec.spec?.containers ?? [];
-          let memLimit = 0, cpuLimit = 0, memReq = 0;
+          let memLimit = 0, cpuLimit = 0;
           for (const c of containers) {
-            memLimit += parseMemory(c.resources?.limits?.memory   ?? '0');
-            cpuLimit += parseCPU(c.resources?.limits?.cpu         ?? '0');
-            memReq   += parseMemory(c.resources?.requests?.memory ?? '0');
+            memLimit += parseMemory(c.resources?.limits?.memory ?? '0');
+            cpuLimit += parseCPU(c.resources?.limits?.cpu       ?? '0');
           }
 
           const memUsed = parseMemory(memStr);
           const cpuUsed = parseCPU(cpuStr);
           const memPct  = pct(memUsed, memLimit);
           const cpuPct  = pct(cpuUsed, cpuLimit);
-          const restarts = spec.status?.containerStatuses?.reduce((s, c) => s + (c.restartCount ?? 0), 0) ?? 0;
           const podNs   = spec.metadata?.namespace ?? '';
 
           if (memPct !== null && memPct >= threshold) {
@@ -147,19 +189,6 @@ Examples:
               timeframe: 'ongoing',
               score: cpuPct,
               recommendation: `Increase CPU limit or add HPA for auto-scaling`,
-            });
-          }
-
-          if (restarts >= 5) {
-            risks.push({
-              type: 'pod-restarts', severity: restarts >= 20 ? 'critical' : 'warning',
-              resource: `pod/${podName}`, namespace: podNs,
-              metric: `${restarts} restarts`,
-              detail: `High restart count indicates recurring crash`,
-              risk: 'CrashLoopBackOff',
-              timeframe: 'recurring',
-              score: Math.min(restarts * 3, 100),
-              recommendation: `kubectl logs ${podName} -n ${podNs} --previous`,
             });
           }
         }
