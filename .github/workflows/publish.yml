@@ -30,7 +30,7 @@ jobs:
         run: |
           PKG_VERSION=$(node -p "require('./package.json').version")
           echo "version=$PKG_VERSION" >> $GITHUB_OUTPUT
-          if npm view nxs-cli@$PKG_VERSION version 2>/dev/null; then
+          if npm view @nextsight/nxs-cli@$PKG_VERSION version 2>/dev/null; then
             echo "already_published=true" >> $GITHUB_OUTPUT
             echo "Version $PKG_VERSION already on npm — skipping"
           else

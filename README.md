@@ -4,7 +4,7 @@
 > and instantly get root cause + fix commands. Auto-notify Slack. Integrate with Prometheus Alertmanager.
 
 ```bash
-npm install -g nxs-cli
+npm install -g @nextsight/nxs-cli
 nxs config --setup
 kubectl logs my-pod --previous | nxs k8s debug --stdin
 ```
@@ -28,7 +28,7 @@ Works with **Groq** (free), **Anthropic Claude**, or **no key at all** (smart mo
 ## Install
 
 ```bash
-npm install -g nxs-cli
+npm install -g @nextsight/nxs-cli
 ```
 
 **Requirements:** Node.js 18+
