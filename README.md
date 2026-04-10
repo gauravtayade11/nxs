@@ -86,10 +86,11 @@ Detects: Docker build failures, npm errors, Terraform misconfigs, pipeline failu
 
 ```bash
 nxs k8s debug <file/--stdin>
-nxs k8s debug --pod <name> -n <ns>   # auto-fetch logs + describe
-nxs k8s status [-n namespace]         # nodes · pods · deployments
-nxs k8s pods [--watch]               # live pod counts by status
-nxs k8s errors                        # quick reference card
+nxs k8s debug --pod <name> -n <ns>          # auto-fetch logs + describe
+nxs k8s debug --deployment <name> -n <ns>   # fetch all pods in deployment
+nxs k8s status [-n namespace]               # nodes · pods · deployments
+nxs k8s pods [--watch]                      # live pod counts by status
+nxs k8s errors                              # quick reference card
 nxs k8s history
 ```
 
@@ -214,6 +215,79 @@ nxs watch "kubectl logs -f my-pod"   # stream a command, AI on errors
 nxs watch app.log --notify slack      # post to Slack when errors detected
 nxs watch app.log --cooldown 120      # min seconds between AI calls
 ```
+
+---
+
+### `nxs predict` — Failure Prediction
+
+```bash
+nxs predict                           # scan all namespaces
+nxs predict -n production             # specific namespace
+nxs predict --threshold 80            # warn when usage exceeds 80% of limit
+nxs predict --ai                      # AI deep analysis
+```
+
+Detects at-risk pods before they fail: high memory usage, high restart counts,
+OOMKilled state, ImagePullBackOff, node pressure, unbound PVCs.
+
+---
+
+### `nxs autopilot` — Self-Healing Assistant
+
+```bash
+nxs autopilot -n production           # watch + prompt before fixing
+nxs autopilot -n staging --auto       # auto-apply safe fixes
+nxs autopilot --dry-run               # show what would be fixed
+nxs autopilot --once                  # run once instead of watching
+```
+
+Watches for unhealthy pods, proposes fixes, and applies them (with confirmation or automatically).
+Safe auto-fixes: restart crashed pods, bump memory on OOMKill.
+
+---
+
+### `nxs blame` — Incident Root Cause Correlator
+
+```bash
+nxs blame                             # last 1 hour
+nxs blame --since 2h -n production   # specific window + namespace
+nxs blame --repo /path/to/app        # point at your app git repo
+nxs blame --no-git                   # k8s events only
+```
+
+Correlates git commits + kubectl events + deploy history into a single timeline,
+then uses AI to identify the likely root cause of a production incident.
+
+---
+
+### `nxs noise` — Alert Fatigue Analyzer
+
+```bash
+nxs noise                                        # analyze nxs history
+nxs noise --alertmanager http://localhost:9093   # query live Alertmanager
+nxs noise --days 30 --threshold 60              # tune sensitivity
+nxs noise --ai                                   # AI suppression recommendations
+```
+
+Scores each alert by fire frequency vs actionability.
+Outputs noise alerts with suppression commands and actionable alerts to keep.
+
+---
+
+### `nxs incident` — Full Incident Commander
+
+```bash
+nxs incident start --title "API down" --severity critical
+nxs incident update <id> --note "Root cause: DB connection pool exhausted"
+nxs incident close  <id> --resolution "Increased pool size to 50"
+nxs incident list
+nxs incident view  <id>
+nxs incident postmortem <id>          # AI-generated postmortem
+nxs incident postmortem <id> --output postmortem.md
+```
+
+Full incident lifecycle from the terminal. Slack notifications at every stage.
+AI-generated postmortem with root cause, timeline, and prevention action items.
 
 ---
 
@@ -349,7 +423,9 @@ nxs history                  # all past analyses
 nxs history --search "oom"   # search history
 nxs history --clear
 nxs report --days 7          # weekly digest
-nxs config --setup
+nxs report --notify slack    # post digest to Slack
+nxs config --setup           # add AI key
+nxs update                   # check for latest version
 ```
 
 ---
