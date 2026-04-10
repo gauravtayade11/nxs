@@ -1,5 +1,10 @@
 # ⚡ nxs — AI-Powered DevOps Intelligence CLI
 
+[![npm](https://img.shields.io/npm/v/@nextsight/nxs-cli)](https://www.npmjs.com/package/@nextsight/nxs-cli)
+[![npm downloads](https://img.shields.io/npm/dm/@nextsight/nxs-cli)](https://www.npmjs.com/package/@nextsight/nxs-cli)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Stars](https://img.shields.io/github/stars/gauravtayade11/nxs?style=social)](https://github.com/gauravtayade11/nxs)
+
 > Paste any error log — Kubernetes, Docker, CI/CD, AWS, GCP, Azure, Terraform —
 > and instantly get root cause + fix commands. Auto-notify Slack. Integrate with Prometheus Alertmanager.
 
