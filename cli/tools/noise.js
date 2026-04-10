@@ -5,7 +5,6 @@
 import chalk from 'chalk';
 import { printBanner, hr } from '../core/ui.js';
 import { loadHistory } from '../core/config.js';
-import { run } from '../core/exec.js';
 import { analyze } from '../core/ai.js';
 
 const SYSTEM_PROMPT = `You are a Site Reliability Engineer analyzing alert patterns for noise and fatigue.
@@ -41,9 +40,8 @@ function scoreNoise(alerts) {
   }).sort((a, b) => b.noiseScore - a.noiseScore);
 }
 
-async function fetchFromAlertmanager(url, days) {
+async function fetchFromAlertmanager(url, _days) {
   try {
-    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
     const res = await fetch(`${url}/api/v2/alerts?silenced=false&inhibited=false`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const active = await res.json();
@@ -65,7 +63,7 @@ async function fetchFromAlertmanager(url, days) {
     const silencedNames = new Set(silences.filter(s => s.status?.state === 'active').flatMap(s => s.matchers?.map(m => m.value) ?? []));
 
     return Object.entries(groups).map(([name, g]) => ({ name, ...g, silenced: silencedNames.has(name) }));
-  } catch (e) {
+  } catch {
     return null;
   }
 }

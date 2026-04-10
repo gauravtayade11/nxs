@@ -41,7 +41,6 @@ async function getUnhealthyPods(ns) {
     const unhealthy = [];
 
     for (const pod of items) {
-      const phase    = pod.status?.phase ?? '';
       const name     = pod.metadata?.name ?? '';
       const podNs    = pod.metadata?.namespace ?? '';
       const statuses = pod.status?.containerStatuses ?? [];
@@ -125,7 +124,7 @@ Examples:
     .action(async (opts) => {
       const ns        = opts.namespace ? `-n ${opts.namespace}` : '--all-namespaces';
       const nsLabel   = opts.namespace ?? 'all namespaces';
-      const interval  = (Number.parseInt(opts.interval, 10) || 30) * 1000;
+      const interval  = (Number.parseInt(opts.interval ?? '30', 10) || 30) * 1000;
       const seen      = new Set(); // track already-fixed pods this session
 
       if (!opts.json) {

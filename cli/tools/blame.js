@@ -213,7 +213,7 @@ Examples:
         ].join('\n');
 
         try {
-          const result = await analyze(context, SYSTEM_PROMPT, (text) => ({
+          const result = await analyze(context, SYSTEM_PROMPT, (_text) => ({
             tool: 'blame', severity: 'warning',
             summary: 'Timeline analyzed in demo mode.',
             likelyCulprit: timeline.find((e) => e.type === 'git')?.message ?? 'unknown',

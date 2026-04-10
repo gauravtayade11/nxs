@@ -83,7 +83,7 @@ Examples:
       const spinner = opts.json ? null : ora('Collecting cluster metrics…').start();
 
       // Fetch everything in parallel
-      const [topPodsR, podsR, nodesR, topNodesR, pvcR] = await Promise.all([
+      const [topPodsR, podsR, nodesR, , pvcR] = await Promise.all([
         run(`kubectl top pods ${ns} --no-headers 2>/dev/null`),
         run(`kubectl get pods ${ns} -o json 2>/dev/null`),
         run(`kubectl get nodes -o json 2>/dev/null`),
@@ -105,8 +105,6 @@ Examples:
           const podNs    = spec.metadata?.namespace ?? '';
           const restarts = spec.status?.containerStatuses?.reduce((s, c) => s + (c.restartCount ?? 0), 0) ?? 0;
 
-          // Flag any pod not in Running/Succeeded phase
-          const phase = spec.status?.phase ?? '';
           const containerStatuses = spec.status?.containerStatuses ?? [];
           for (const cs of containerStatuses) {
             const reason = cs.state?.waiting?.reason ?? cs.state?.terminated?.reason ?? '';
