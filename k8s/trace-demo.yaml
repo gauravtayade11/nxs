@@ -1,0 +1,376 @@
+---
+# nxs trace demo — 3-tier app: frontend → backend → postgres
+# Deploy with:
+#   kubectl apply -f k8s/trace-demo.yaml
+# Access:
+#   kubectl port-forward svc/frontend -n trace-demo 8080:80
+#   curl http://localhost:8080/api/users
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: trace-demo
+
+---
+# ── PostgreSQL ───────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: trace-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+        tier: database
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:15-alpine
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 5432
+        env:
+        - name: POSTGRES_DB
+          value: appdb
+        - name: POSTGRES_USER
+          value: appuser
+        - name: POSTGRES_PASSWORD
+          value: apppass
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+        readinessProbe:
+          exec:
+            command: ["pg_isready", "-U", "appuser", "-d", "appdb"]
+          initialDelaySeconds: 10
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: trace-demo
+spec:
+  selector:
+    app: postgres
+  ports:
+  - port: 5432
+    targetPort: 5432
+
+---
+# ── Backend ConfigMap ────────────────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-script
+  namespace: trace-demo
+data:
+  server.py: |
+    import http.server, json, time, random, os, urllib.request, urllib.error
+
+    JAEGER_OTLP = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "http://jaeger:4318")
+    SERVICE_NAME = "backend"
+
+    def send_trace(trace_id, spans_data):
+        """Send multiple spans (same trace) to Jaeger via OTLP/HTTP JSON."""
+        otlp_spans = []
+        for name, start_ns, end_ns, attrs, parent_id, status in spans_data:
+            span_id = os.urandom(8).hex()
+            refs = []
+            if parent_id:
+                refs = [{"traceId": trace_id, "spanId": parent_id, "refType": "CHILD_OF"}]
+            otlp_span = {
+                "traceId": trace_id, "spanId": span_id,
+                "name": name,
+                "kind": 2,
+                "startTimeUnixNano": str(start_ns),
+                "endTimeUnixNano":   str(end_ns),
+                # OTLP status: 1=OK, 2=ERROR
+                "status": {"code": 1 if status == "ok" else 2},
+                "attributes": [{"key": k, "value": {"stringValue": str(v)}} for k, v in (attrs or {}).items()],
+                "references": refs,
+            }
+            otlp_spans.append((span_id, otlp_span))
+        body = json.dumps({
+            "resourceSpans": [{
+                "resource": {"attributes": [{"key": "service.name", "value": {"stringValue": SERVICE_NAME}}]},
+                "scopeSpans": [{
+                    "scope": {"name": "nxs-demo"},
+                    "spans": [s for _, s in otlp_spans],
+                }]
+            }]
+        }).encode()
+        try:
+            req = urllib.request.Request(
+                f"{JAEGER_OTLP}/v1/traces",
+                data=body, method="POST",
+                headers={"Content-Type": "application/json"}
+            )
+            urllib.request.urlopen(req, timeout=1)
+        except Exception as e:
+            print(f"[backend] trace send failed: {e}", flush=True)
+        return [sid for sid, _ in otlp_spans]
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, fmt, *args):
+            print("[backend] " + fmt % args, flush=True)
+
+        def do_GET(self):
+            start = time.time()
+            start_ns = time.time_ns()
+
+            if self.path == "/health":
+                self._respond(200, {"status": "ok", "service": SERVICE_NAME})
+                return
+
+            if self.path == "/api/users":
+                # Simulate DB query
+                db_start = time.time()
+                db_start_ns = time.time_ns()
+                delay = 0.05 + random.random() * 0.15
+                time.sleep(delay)
+                db_end_ns = time.time_ns()
+                db_ms = int((time.time() - db_start) * 1000)
+
+                total_ms = int((time.time() - start) * 1000)
+                print(f"[backend] /api/users {total_ms}ms db={db_ms}ms", flush=True)
+
+                # Send both spans in one trace (linked parent→child)
+                trace_id = os.urandom(16).hex()
+                # Root span first (placeholder span_id); db span will reference it
+                root_span_id = os.urandom(8).hex()
+                db_span_id   = os.urandom(8).hex()
+                end_ns = time.time_ns()
+                body = json.dumps({
+                    "resourceSpans": [{
+                        "resource": {"attributes": [{"key": "service.name", "value": {"stringValue": SERVICE_NAME}}]},
+                        "scopeSpans": [{
+                            "scope": {"name": "nxs-demo"},
+                            "spans": [
+                                {
+                                    "traceId": trace_id, "spanId": root_span_id,
+                                    "name": "http.request /api/users",
+                                    "kind": 2,
+                                    "startTimeUnixNano": str(start_ns),
+                                    "endTimeUnixNano": str(end_ns),
+                                    "status": {"code": 1},
+                                    "attributes": [
+                                        {"key": "http.method",      "value": {"stringValue": "GET"}},
+                                        {"key": "http.url",         "value": {"stringValue": "/api/users"}},
+                                        {"key": "http.status_code", "value": {"intValue": 200}},
+                                        {"key": "total_ms",         "value": {"intValue": total_ms}},
+                                        {"key": "db_ms",            "value": {"intValue": db_ms}},
+                                    ]
+                                },
+                                {
+                                    "traceId": trace_id, "spanId": db_span_id,
+                                    "parentSpanId": root_span_id,
+                                    "name": "db.query.users",
+                                    "kind": 3,
+                                    "startTimeUnixNano": str(db_start_ns),
+                                    "endTimeUnixNano": str(db_end_ns),
+                                    "status": {"code": 1},
+                                    "attributes": [
+                                        {"key": "db.system",    "value": {"stringValue": "postgresql"}},
+                                        {"key": "db.statement", "value": {"stringValue": "SELECT * FROM users"}},
+                                        {"key": "db.time_ms",   "value": {"intValue": db_ms}},
+                                    ]
+                                },
+                            ]
+                        }]
+                    }]
+                }).encode()
+                try:
+                    req = urllib.request.Request(
+                        f"{JAEGER_OTLP}/v1/traces",
+                        data=body, method="POST",
+                        headers={"Content-Type": "application/json"}
+                    )
+                    urllib.request.urlopen(req, timeout=1)
+                except Exception as e:
+                    print(f"[backend] trace send failed: {e}", flush=True)
+
+                self._respond(200, {
+                    "users": [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}],
+                    "backend_time_ms": total_ms,
+                    "db_time_ms": db_ms
+                })
+                return
+
+            self._respond(404, {"error": "not found"})
+
+        def _respond(self, code, body):
+            data = json.dumps(body).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("X-Service", SERVICE_NAME)
+            self.end_headers()
+            self.wfile.write(data)
+
+    print(f"[backend] listening on :3000  jaeger={JAEGER_OTLP}", flush=True)
+    http.server.HTTPServer(("0.0.0.0", 3000), Handler).serve_forever()
+
+---
+# ── Backend ──────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: trace-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+        tier: backend
+    spec:
+      containers:
+      - name: backend
+        image: python:3.11-alpine
+        imagePullPolicy: IfNotPresent
+        command: ["python", "/app/server.py"]
+        ports:
+        - containerPort: 3000
+        volumeMounts:
+        - name: script
+          mountPath: /app
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: script
+        configMap:
+          name: backend-script
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: trace-demo
+spec:
+  selector:
+    app: backend
+  ports:
+  - port: 3000
+    targetPort: 3000
+
+---
+# ── Frontend (nginx proxy) ───────────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+  namespace: trace-demo
+data:
+  default.conf: |
+    log_format trace '$remote_addr → $host [$time_local] '
+                     '"$request" $status $body_bytes_sent '
+                     'rt=$request_time uct=$upstream_connect_time '
+                     'uht=$upstream_header_time urt=$upstream_response_time '
+                     'upstream=$upstream_addr';
+
+    access_log /var/log/nginx/access.log trace;
+
+    server {
+      listen 80;
+      server_name _;
+
+      location /health {
+        return 200 '{"status":"ok","service":"frontend"}';
+        add_header Content-Type application/json;
+      }
+
+      location /api/ {
+        proxy_pass http://backend:3000;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Request-Start $msec;
+        add_header X-Frontend-Time $request_time;
+        add_header X-Upstream $upstream_addr;
+      }
+
+      location / {
+        return 200 '{"service":"frontend","endpoints":["/api/users","/health"]}';
+        add_header Content-Type application/json;
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: trace-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+        tier: frontend
+    spec:
+      containers:
+      - name: frontend
+        image: nginx:alpine
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: nginx-config
+          mountPath: /etc/nginx/conf.d
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: nginx-config
+        configMap:
+          name: nginx-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: trace-demo
+spec:
+  selector:
+    app: frontend
+  ports:
+  - port: 80
+    targetPort: 80
+  type: ClusterIP

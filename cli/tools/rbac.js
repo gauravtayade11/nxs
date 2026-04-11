@@ -5,6 +5,7 @@
 import chalk from 'chalk';
 import { printBanner, hr } from '../core/ui.js';
 import { run } from '../core/exec.js';
+import { checkDeps } from '../core/deps.js';
 import { writeFileSync } from 'node:fs';
 
 const RISK = {
@@ -41,6 +42,7 @@ Examples:
   $ nxs rbac scan --fail-on high
   $ nxs rbac scan --output rbac-report.md`)
     .action(async (opts) => {
+      if (!await checkDeps('kubectl')) { process.exit(1); }
       if (!opts.json) printBanner('Kubernetes RBAC scanner');
 
       const nsFlag = opts.namespace ? `-n ${opts.namespace}` : '--all-namespaces';

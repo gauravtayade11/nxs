@@ -1,6 +1,6 @@
 {
   "name": "@nextsight/nxs-cli",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "AI-powered DevOps intelligence CLI — debug Kubernetes, Docker, CI/CD, AWS, GCP, Azure, Terraform errors instantly from your terminal",
   "type": "module",
   "keywords": [

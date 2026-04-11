@@ -8,6 +8,7 @@ import { printBanner, hr } from '../core/ui.js';
 import { loadHistory } from '../core/config.js';
 import { run } from '../core/exec.js';
 import { analyze } from '../core/ai.js';
+import { checkDeps, warnMissingDeps } from '../core/deps.js';
 
 const SYSTEM_PROMPT = `You are an SRE performing root cause analysis on a production incident.
 You have been given a timeline of events: git commits, Kubernetes events, deployment rollouts, and past analyses.
@@ -60,6 +61,8 @@ Examples:
   $ nxs blame --since 30m --repo /path/to/your-app -n production
   $ nxs blame --no-ai --no-git   # k8s events only`)
     .action(async (opts) => {
+      if (!opts.noGit) await warnMissingDeps('git');
+      if (!await checkDeps('kubectl')) { process.exit(1); }
       const windowMs  = parseDuration(opts.since ?? '1h');
       const since     = new Date(Date.now() - windowMs);
       const sinceISO  = since.toISOString();

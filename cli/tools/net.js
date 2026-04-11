@@ -5,7 +5,7 @@
 import chalk from 'chalk';
 import { printBanner, hr } from '../core/ui.js';
 import { runAnalyze, runHistory } from '../core/runner.js';
-import { run, hasBin } from '../core/exec.js';
+import { run } from '../core/exec.js';
 
 const SYSTEM_PROMPT = `You are a senior network and infrastructure engineer. Analyze the provided network error, DNS failure, TLS/SSL error, or connectivity issue output.
 

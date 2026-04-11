@@ -6,6 +6,7 @@ import chalk from 'chalk';
 import { printBanner, hr } from '../core/ui.js';
 import { run } from '../core/exec.js';
 import { analyze } from '../core/ai.js';
+import { checkDeps } from '../core/deps.js';
 
 const SYSTEM_PROMPT = `You are a Kubernetes SRE performing automated triage.
 Given a pod's current state, logs, and events, recommend the safest fix.
@@ -122,6 +123,7 @@ Examples:
   $ nxs autopilot --dry-run
   $ nxs autopilot --once --ai`)
     .action(async (opts) => {
+      if (!await checkDeps('kubectl')) { process.exit(1); }
       const ns        = opts.namespace ? `-n ${opts.namespace}` : '--all-namespaces';
       const nsLabel   = opts.namespace ?? 'all namespaces';
       const interval  = (Number.parseInt(opts.interval ?? '30', 10) || 30) * 1000;

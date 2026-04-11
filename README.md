@@ -291,6 +291,34 @@ AI-generated postmortem with root cause, timeline, and prevention action items.
 
 ---
 
+### `nxs trace` — HTTP Request Tracer
+
+```bash
+nxs trace http://localhost:8080/api/users -n trace-demo
+nxs trace http://localhost:8080/api/users --count 5 --ai
+nxs trace http://localhost:8080/api/users --jaeger http://localhost:16686
+nxs trace --jaeger http://localhost:16686 --live           # real-time waterfall
+nxs trace --jaeger http://localhost:16686 --live --ai      # AI on slow spans
+nxs trace --jaeger http://localhost:16686 --live --slow-ms 100
+```
+
+Hits a URL N times, measures timing per hop (frontend → backend → DB), fetches pod logs,
+shows CPU/memory at the time of the request.
+
+`--live` mode polls Jaeger every 2s and renders new traces as a waterfall as they arrive:
+
+```
+[14:02:31]  GET /api/users  200  181ms
+backend:http.request /api/us   181ms  ████████████  ← SLOW
+└─ backend:db.query.users      179ms  ████████████  ← SLOW
+      sql: SELECT * FROM users
+```
+
+**Requirements for `--live`:** deploy Jaeger and instrument your app with OpenTelemetry.
+Demo manifests: `kubectl apply -f k8s/trace-demo.yaml && kubectl apply -f k8s/jaeger.yaml`
+
+---
+
 ### `nxs status` — Live Dashboard
 
 ```bash

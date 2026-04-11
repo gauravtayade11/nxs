@@ -5,6 +5,7 @@
 import chalk from 'chalk';
 import ora   from 'ora';
 import { run, hasBin, parseTable } from '../core/exec.js';
+import { checkDeps, warnMissingDeps } from '../core/deps.js';
 import { printBanner, hr }         from '../core/ui.js';
 import { loadConfig }              from '../core/config.js';
 
@@ -34,10 +35,6 @@ const STATUS_COLORS = {
 function colorStatus(status) {
   const fn = STATUS_COLORS[status] ?? chalk.white;
   return fn(status);
-}
-
-function badge(count, fn = chalk.white) {
-  return fn.bold(String(count).padStart(4));
 }
 
 function sectionHeader(title, icon) {
@@ -367,6 +364,8 @@ Examples:
   $ nxs status --only pipelines       pipelines only
   $ nxs status -r myorg/myrepo        specific GitHub repo`)
     .action(async (opts) => {
+      if (!await checkDeps('kubectl')) { process.exit(1); }
+      await warnMissingDeps('helm', 'gh');
       printBanner('Live infrastructure dashboard');
       await printDashboard(opts);
       console.log(chalk.dim('  Tip: pipe failed logs → nxs k8s debug / nxs devops analyze\n'));

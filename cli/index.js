@@ -24,6 +24,7 @@ import { registerBlame }     from './tools/blame.js';
 import { registerPredict }   from './tools/predict.js';
 import { registerIncident }  from './tools/incident.js';
 import { registerAutopilot } from './tools/autopilot.js';
+import { registerTrace }     from './tools/trace.js';
 
 // Load .env then persisted config (quiet: true suppresses dotenv v17 promo output)
 config({ path: resolve(process.cwd(), '.env'), quiet: true });
@@ -57,6 +58,7 @@ registerBlame(program);
 registerPredict(program);
 registerIncident(program);
 registerAutopilot(program);
+registerTrace(program);
 
 // Wire status sub-commands into existing tools
 const k8sCmd     = program.commands.find((c) => c.name() === 'k8s');
@@ -704,6 +706,12 @@ if (process.argv.slice(2).length === 0) {
       color: chalk.hex('#e17055'),
       desc: 'Full incident commander — start, track, postmortem',
       cmds: ['start --title "..." --severity critical', 'update <id> --note "..."', 'close <id> --resolution "..."', 'postmortem <id>'],
+    },
+    {
+      name: 'trace',
+      color: chalk.hex('#74b9ff'),
+      desc: 'Trace HTTP requests — timing, pod logs, Jaeger waterfall',
+      cmds: ['<url>', '<url> --jaeger http://localhost:16686', '--jaeger <url> --live', '--live --ai --slow-ms 100'],
     },
   ];
 

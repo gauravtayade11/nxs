@@ -6,6 +6,7 @@ import chalk from 'chalk';
 import { printBanner, hr } from '../core/ui.js';
 import { runAnalyze, runHistory } from '../core/runner.js';
 import { run, hasBin } from '../core/exec.js';
+import { checkDeps } from '../core/deps.js';
 
 const SYSTEM_PROMPT = `You are a senior application security engineer (AppSec). Analyze the provided security scan output from tools like Trivy, Grype, Snyk, or OWASP Dependency Check.
 
@@ -120,15 +121,12 @@ Examples:
   $ nxs sec scan --pod my-pod -n production
   $ nxs sec scan --image nginx:latest`)
     .action(async (file, opts) => {
+      if (opts.image) { if (!await checkDeps('trivy'))          { process.exit(1); } }
+      if (opts.pod)   { if (!await checkDeps('kubectl', 'trivy')) { process.exit(1); } }
       if (!opts.json) printBanner('Security scan analyzer');
 
       // --image: run trivy locally and pipe output
       if (opts.image) {
-        const hasTrivy = await hasBin('trivy');
-        if (!hasTrivy) {
-          console.error(chalk.red('  trivy not found. Install: https://trivy.dev/latest/getting-started/installation/'));
-          process.exit(1);
-        }
         if (!opts.json) console.log(chalk.dim(`  Running trivy on image: ${chalk.white(opts.image)}\n`));
         const { stdout, stderr } = await run(`trivy image --no-progress ${opts.image} 2>/dev/null`, { timeout: 300000 });
         const output = stdout || stderr;
@@ -215,13 +213,8 @@ Examples:
   $ nxs sec cluster --detailed --output r.md  # full terminal + save file
   $ nxs sec cluster --skip "pause,coredns,metrics-server"`)
     .action(async (opts) => {
+      if (!await checkDeps('kubectl', 'trivy')) { process.exit(1); }
       printBanner('Cluster image security scanner');
-
-      const hasTrivy = await hasBin('trivy');
-      if (!hasTrivy) {
-        console.error(chalk.red('  trivy not found. Install: https://trivy.dev/latest/getting-started/installation/'));
-        process.exit(1);
-      }
 
       const nsFlag = opts.namespace ? `-n ${opts.namespace}` : '--all-namespaces';
       const skipList = (opts.skip || '').split(',').map((s) => s.trim()).filter(Boolean);
