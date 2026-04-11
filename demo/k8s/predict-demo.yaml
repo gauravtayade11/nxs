@@ -1,0 +1,107 @@
+---
+# nxs predict demo — broken pods that trigger every failure type
+# Deploy with:
+#   kubectl apply -f demo/k8s/predict-demo.yaml
+# Then run:
+#   nxs predict -n nxs-demo-bad
+# Clean up:
+#   kubectl delete namespace nxs-demo-bad
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nxs-demo-bad
+
+---
+# CrashLoopBackOff — exits with error every restart
+apiVersion: v1
+kind: Pod
+metadata:
+  name: crash-loop-demo
+  namespace: nxs-demo-bad
+spec:
+  containers:
+  - name: crash-loop-demo
+    image: alpine:3.18
+    command: ["/bin/sh", "-c", "echo 'ERROR: config file /etc/app/config.yaml not found'; exit 1"]
+    resources:
+      limits:
+        memory: "64Mi"
+        cpu: "100m"
+  restartPolicy: Always
+
+---
+# OOMKilled — mmap touches every page at OS level, bypasses Python allocator, reliably OOMKills
+apiVersion: v1
+kind: Pod
+metadata:
+  name: oom-demo
+  namespace: nxs-demo-bad
+spec:
+  containers:
+  - name: oom-demo
+    image: python:3.11-alpine
+    command: ["python3", "-c", "import mmap,time; m=mmap.mmap(-1,200*1024*1024); [m.__setitem__(slice(i,i+1),b'x') for i in range(0,200*1024*1024,4096)]; time.sleep(999)"]
+    resources:
+      requests:
+        memory: "10Mi"
+      limits:
+        memory: "50Mi"
+        cpu: "100m"
+  restartPolicy: Always
+
+---
+# ImagePullBackOff — image does not exist
+apiVersion: v1
+kind: Pod
+metadata:
+  name: image-pull-demo
+  namespace: nxs-demo-bad
+spec:
+  containers:
+  - name: image-pull-demo
+    image: mycompany/private-app:v99.99.99-does-not-exist
+    resources:
+      limits:
+        memory: "64Mi"
+        cpu: "100m"
+  restartPolicy: Always
+
+---
+# Pending — nodeSelector no node can satisfy
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pending-demo
+  namespace: nxs-demo-bad
+spec:
+  nodeSelector:
+    gpu: "nvidia-a100"
+  containers:
+  - name: pending-demo
+    image: registry.k8s.io/pause:3.9
+    resources:
+      limits:
+        memory: "64Mi"
+        cpu: "100m"
+  restartPolicy: Always
+
+---
+# At-risk — running fine right now, but 8x request/limit gap will OOMKill under load
+# This is the PREDICTION case: no errors yet, but nxs predict flags it as WARNING
+apiVersion: v1
+kind: Pod
+metadata:
+  name: payment-api
+  namespace: nxs-demo-bad
+spec:
+  containers:
+  - name: api
+    image: alpine:3.18
+    command: ["/bin/sh", "-c", "while true; do sleep 60; done"]
+    resources:
+      requests:
+        memory: "32Mi"
+      limits:
+        memory: "256Mi"
+  restartPolicy: Always

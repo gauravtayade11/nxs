@@ -10,7 +10,7 @@
 > and instantly get root cause + fix commands. Auto-notify Slack. Integrate with Prometheus Alertmanager.
 
 ```bash
-npm install -g @nextsight/nxs-cli        # v2.1.2
+npm install -g @nextsight/nxs-cli        # v2.1.3
 nxs config --setup
 kubectl logs my-pod --previous | nxs k8s debug --stdin
 ```
