@@ -4,12 +4,13 @@
 [![npm downloads](https://img.shields.io/npm/dm/@nextsight/nxs-cli)](https://www.npmjs.com/package/@nextsight/nxs-cli)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/gauravtayade11/nxs?style=social)](https://github.com/gauravtayade11/nxs)
+[![Snyk](https://img.shields.io/badge/security-snyk-4C4A73?logo=snyk)](https://snyk.io)
 
 > Paste any error log — Kubernetes, Docker, CI/CD, AWS, GCP, Azure, Terraform —
 > and instantly get root cause + fix commands. Auto-notify Slack. Integrate with Prometheus Alertmanager.
 
 ```bash
-npm install -g @nextsight/nxs-cli
+npm install -g @nextsight/nxs-cli        # v2.1.2
 nxs config --setup
 kubectl logs my-pod --previous | nxs k8s debug --stdin
 ```
@@ -38,11 +39,12 @@ npm install -g @nextsight/nxs-cli
 
 **Requirements:** Node.js 18+
 
-Optional CLIs (for live cluster features):
-- `kubectl` — for `nxs k8s`, `nxs rbac`, `nxs status`
+Optional CLIs (for live cluster features) — nxs will warn if missing:
+- `kubectl` — for `nxs k8s`, `nxs predict`, `nxs autopilot`, `nxs rbac`, `nxs trace`, `nxs status`
 - `helm` — for `nxs status --only helm`
 - `gh` — for `nxs ci analyze --run <id>`, `nxs devops pipelines`
 - `trivy` — for `nxs sec scan --image` and `nxs sec cluster`
+- `git` — for `nxs blame` (commit timeline)
 
 ---
 

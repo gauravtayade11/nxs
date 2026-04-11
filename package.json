@@ -1,6 +1,6 @@
 {
   "name": "@nextsight/nxs-cli",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "description": "AI-powered DevOps intelligence CLI — debug Kubernetes, Docker, CI/CD, AWS, GCP, Azure, Terraform errors instantly from your terminal",
   "type": "module",
   "keywords": [
@@ -15,9 +15,22 @@
     "ai",
     "debugging",
     "logs",
-    "cloud"
+    "cloud",
+    "sre",
+    "observability",
+    "incident",
+    "k8s",
+    "kubectl",
+    "opentelemetry",
+    "jaeger",
+    "tracing",
+    "slack"
   ],
-  "author": "gtayade",
+  "author": {
+    "name": "Gaurav Tayade",
+    "url": "https://github.com/gauravtayade11"
+  },
+  "publisher": "gauravtayade11",
   "license": "MIT",
   "engines": {
     "node": ">=18"
@@ -27,6 +40,9 @@
     "url": "https://github.com/gauravtayade11/nxs.git"
   },
   "homepage": "https://github.com/gauravtayade11/nxs#readme",
+  "bugs": {
+    "url": "https://github.com/gauravtayade11/nxs/issues"
+  },
   "bin": {
     "nxs": "./cli/index.js"
   },

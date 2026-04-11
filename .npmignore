@@ -1,0 +1,27 @@
+# Frontend / web app (not part of CLI)
+src/
+public/
+docs/
+docs.html
+index.html
+vite.config.js
+
+# Dev / local only
+.claude/
+.env
+.env.*
+content/
+DEMO*.md
+DEMO_PLAN.md
+VIDEO_DEMO.md
+TECHNICAL_GUIDE.md
+demo/logs/
+
+# Test / CI internals
+.github/
+eslint.config.js
+*.log
+
+# Git
+.gitignore
+.snyk

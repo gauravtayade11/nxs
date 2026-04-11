@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'package.json'       # only runs when version changes
+      - 'package.json'
       - 'cli/**'
       - 'README.md'
 
@@ -12,6 +12,10 @@ jobs:
   publish:
     name: npm publish
     runs-on: ubuntu-latest
+    permissions:
+      contents: write       # needed to create GitHub releases
+      id-token: write       # needed for npm OIDC trusted publisher
+
     steps:
       - uses: actions/checkout@v4
 
@@ -38,14 +42,33 @@ jobs:
             echo "Version $PKG_VERSION not yet published — will publish"
           fi
 
-      - name: Publish to npm
+      - name: Publish to npm (OIDC trusted publisher)
         if: steps.version_check.outputs.already_published == 'false'
-        run: npm publish --access public
+        run: npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create GitHub Release
+        if: steps.version_check.outputs.already_published == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version_check.outputs.version }}
+          name: v${{ steps.version_check.outputs.version }}
+          generate_release_notes: true
+          body: |
+            ## Install
+
+            ```bash
+            npm install -g @nextsight/nxs-cli
+            ```
+
+            Full changelog auto-generated below.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Summary
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          echo "### Published nxs-cli@$VERSION to npm" >> $GITHUB_STEP_SUMMARY
-          echo "Install: \`npm install -g nxs-cli\`" >> $GITHUB_STEP_SUMMARY
+          echo "### Published @nextsight/nxs-cli@$VERSION to npm" >> $GITHUB_STEP_SUMMARY
+          echo "Install: \`npm install -g @nextsight/nxs-cli\`" >> $GITHUB_STEP_SUMMARY
+          echo "GitHub Release: v$VERSION created" >> $GITHUB_STEP_SUMMARY
