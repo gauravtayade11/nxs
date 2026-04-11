@@ -134,13 +134,15 @@ data:
                 return
 
             if self.path == "/api/users":
-                # Simulate DB query
+                # Simulate DB query (50-120ms)
                 db_start = time.time()
                 db_start_ns = time.time_ns()
-                delay = 0.05 + random.random() * 0.15
-                time.sleep(delay)
+                time.sleep(0.05 + random.random() * 0.07)
                 db_end_ns = time.time_ns()
                 db_ms = int((time.time() - db_start) * 1000)
+
+                # Simulate business logic / serialization after DB (20-60ms)
+                time.sleep(0.02 + random.random() * 0.04)
 
                 total_ms = int((time.time() - start) * 1000)
                 print(f"[backend] /api/users {total_ms}ms db={db_ms}ms", flush=True)
