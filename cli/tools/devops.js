@@ -3,7 +3,7 @@
  */
 import { readFileSync, existsSync, statSync } from 'node:fs';
 import chalk from 'chalk';
-import { printBanner, hr } from '../core/ui.js';
+import { printBanner } from '../core/ui.js';
 import { runAnalyze, runHistory } from '../core/runner.js';
 
 const SYSTEM_PROMPT = `You are an expert DevOps engineer specializing in CI/CD pipelines, Docker, and Terraform.

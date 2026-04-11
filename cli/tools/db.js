@@ -275,7 +275,7 @@ Examples:
               console.log(chalk.red(`\n  ⚡ THRESHOLD HIT (${total}/${maxConn} = ${pct}%) — killing ${toKill.length} idle connection(s)\n`));
               const pids = toKill.map((c) => c.pid).join(', ');
               const killSql = `SELECT pid, pg_terminate_backend(pid) FROM pg_stat_activity WHERE pid IN (${pids})`;
-              const killResult = await psql(killSql);
+              await psql(killSql);
               toKill.forEach((c) => {
                 console.log(chalk.green(`    ✓ Killed PID ${c.pid} — ${c.user} — idle ${c.mins}min`));
               });

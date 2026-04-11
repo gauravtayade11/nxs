@@ -5,6 +5,7 @@ import chalk from 'chalk';
 import { printBanner, hr } from '../core/ui.js';
 import { runAnalyze, runHistory } from '../core/runner.js';
 import { run } from '../core/exec.js';
+import { checkDeps } from '../core/deps.js';
 
 const SYSTEM_PROMPT = `You are a Kubernetes expert (CKA/CKAD level). Analyze the provided Kubernetes log, event, or error output.
 Return a JSON object with exactly this structure:
@@ -103,6 +104,9 @@ Examples:
   $ kubectl describe pod my-pod | nxs k8s debug --stdin
   $ kubectl logs my-pod --previous | nxs k8s debug -s`)
     .action(async (file, opts) => {
+      if (opts.pod || opts.deployment) {
+        if (!await checkDeps('kubectl')) { process.exit(1); }
+      }
       if (!opts.json) printBanner('Kubernetes deep-dive debugger');
 
       // --deployment: fetch logs from all pods in the deployment

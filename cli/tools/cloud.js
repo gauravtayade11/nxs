@@ -58,14 +58,6 @@ function mockAnalyze(logText) {
   return { tool: 'unknown', severity: 'info', service: 'unknown', summary: 'Could not detect cloud provider.', rootCause: 'Unknown error.', fixSteps: '- Add more context to the log.', commands: 'echo "unknown"' };
 }
 
-// Override printResult to show "service" field
-async function printCloudResult(result) {
-  const { printResult } = await import('../core/ui.js');
-  if (result.service && result.service !== 'unknown') {
-    result.summary = `[${result.service.toUpperCase()}] ${result.summary}`;
-  }
-  printResult(result);
-}
 
 export function registerCloud(program) {
   const cloud = program

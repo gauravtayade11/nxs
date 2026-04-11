@@ -33,3 +33,6 @@ dist-ssr
 # Internal docs
 DEMO.md
 DOCS.md
+
+# Content drafts (local only)
+content/

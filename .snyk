@@ -1,0 +1,49 @@
+# Snyk (https://snyk.io) policy file, patches or ignores known vulnerabilities.
+version: v1.25.1
+# ignores vulnerabilities until expiry date; change duration by modifying expiry date
+ignore:
+  SNYK-CODE-CLEARTEXT-TRANSMISSION:
+    - '*':
+        reason: 'Local CLI server — HTTP is intentional, TLS handled by reverse proxy'
+        expires: 2099-01-01T00:00:00.000Z
+  SNYK-CODE-PATH-TRAVERSAL:
+    - '*':
+        reason: >
+          opts.output is the write path (user CLI flag, sanitized in runner.js).
+          _injected is the file content, not the path. False positive data-flow
+          trace.
+        expires: 2099-01-01T00:00:00.000Z
+  7077616e-4611-49a1-9d76-aa5c7351cbdc:
+    - '*':
+        reason: 'Local CLI server, HTTP intentional, TLS at reverse proxy'
+        expires: 2099-01-01T00:00:00.000Z
+        created: 2026-04-11T07:13:55.009Z
+  f20feec0-1f29-49a9-a0be-596d84eb0bb1:
+    - '*':
+        reason: >-
+          False positive: _injected is log content not path, path sanitized in
+          runner.js
+        expires: 2099-01-01T00:00:00.000Z
+        created: 2026-04-11T07:14:01.298Z
+  c26e53e7-9919-4305-abd5-7f89c708b6b7:
+    - '*':
+        reason: >-
+          False positive: _injected is log content not path, path sanitized in
+          runner.js
+        expires: 2099-01-01T00:00:00.000Z
+        created: 2026-04-11T07:14:05.189Z
+  c3e4581e-9243-4009-8699-f1294fe8a82c:
+    - '*':
+        reason: >-
+          False positive: _injected is log content not path, path sanitized in
+          runner.js
+        expires: 2099-01-01T00:00:00.000Z
+        created: 2026-04-11T07:14:09.316Z
+  63e03c1e-2f38-42d2-857f-8bde0cca09e1:
+    - '*':
+        reason: >-
+          False positive: _injected is log content not path, path sanitized in
+          runner.js
+        expires: 2099-01-01T00:00:00.000Z
+        created: 2026-04-11T07:14:13.593Z
+patch: {}

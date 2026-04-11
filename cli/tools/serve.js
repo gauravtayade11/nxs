@@ -395,6 +395,8 @@ Alertmanager config:
       const port = Number.parseInt(opts.port, 10);
       const host = opts.host;
 
+      // nxs serve is a local CLI tool — HTTP is intentional (users add TLS via reverse proxy)
+      // nxs-snyk-ignore: CleartextTransmission - local dev server, not exposed directly
       const server = createServer(async (req, res) => {
         const t0 = Date.now();
 

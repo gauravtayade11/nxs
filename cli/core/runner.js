@@ -125,9 +125,15 @@ export async function runAnalyze(toolModule, systemPrompt, mockFn, file, opts) {
   // --output: save full analysis to a markdown file
   if (opts.output) {
     try {
+      // Resolve to absolute path and restrict to cwd to prevent path traversal
+      const safePath = resolve(process.cwd(), opts.output);
+      if (!safePath.startsWith(process.cwd())) {
+        console.error(chalk.red('  ✗ Output path must be within the current directory\n'));
+        return result;
+      }
       const md = buildMarkdown(result, logText);
-      writeFileSync(opts.output, md, 'utf8');
-      console.log(chalk.green(`  ✓ Analysis saved to ${opts.output}\n`));
+      writeFileSync(safePath, md, 'utf8');
+      console.log(chalk.green(`  ✓ Analysis saved to ${safePath}\n`));
     } catch (e) {
       console.error(chalk.red(`  ✗ Could not write output file: ${e.message}\n`));
     }

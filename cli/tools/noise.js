@@ -51,7 +51,8 @@ async function fetchFromAlertmanager(url, _days) {
     const silences = silRes.ok ? await silRes.json() : [];
 
     // Group active alerts by alertname
-    const groups = {};
+    // Use Object.create(null) to prevent prototype pollution from external alertname values
+    const groups = Object.create(null);
     for (const a of active) {
       const name = a.labels?.alertname ?? 'unknown';
       if (!groups[name]) groups[name] = { fires: 0, autoResolved: 0, actioned: 0, severity: a.labels?.severity ?? 'info', lastSeen: a.startsAt };
