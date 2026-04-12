@@ -18,6 +18,7 @@ node_modules
 dist
 dist-ssr
 *.local
+coverage/
 .env
 .env.*
 !.env.example

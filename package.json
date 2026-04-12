@@ -49,6 +49,7 @@
   },
   "scripts": {
     "test": "node --test cli/tests/rules.test.js cli/tests/redact.test.js cli/tests/ai.test.js",
+    "test:coverage": "mkdir -p coverage && node --test --experimental-test-coverage --test-reporter=lcov --test-reporter-destination=coverage/lcov.info --test-reporter=spec --test-reporter-destination=stdout cli/tests/rules.test.js cli/tests/redact.test.js cli/tests/ai.test.js",
     "lint": "eslint .",
     "cli": "node cli/index.js",
     "check-version": "node scripts/check-version.js",
