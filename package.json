@@ -56,14 +56,11 @@
     "prepublishOnly": "node scripts/check-version.js"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.82.0",
-    "chalk": "^5.6.2",
-    "commander": "^14.0.3",
-    "dotenv": "^17.4.1",
-    "lucide-react": "^1.7.0",
-    "ora": "^9.3.0",
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4"
+    "@anthropic-ai/sdk": "0.82.0",
+    "chalk": "5.6.2",
+    "commander": "14.0.3",
+    "dotenv": "17.4.1",
+    "ora": "9.3.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
@@ -74,6 +71,9 @@
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.4.0",
+    "lucide-react": "^1.7.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
     "vite": "^8.0.4"
   }
 }
