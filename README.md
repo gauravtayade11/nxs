@@ -40,7 +40,7 @@ npm install -g @nextsight/nxs-cli
 **Requirements:** Node.js 18+
 
 Optional CLIs (for live cluster features) — nxs will warn if missing:
-- `kubectl` — for `nxs k8s`, `nxs predict`, `nxs autopilot`, `nxs rbac`, `nxs trace`, `nxs status`
+- `kubectl` — for `nxs k8s`, `nxs predict`, `nxs autopilot`, `nxs sec cluster`, `nxs rbac`, `nxs trace`, `nxs status`
 - `helm` — for `nxs status --only helm`
 - `gh` — for `nxs ci analyze --run <id>`, `nxs devops pipelines`
 - `trivy` — for `nxs sec scan --image` and `nxs sec cluster`
@@ -134,14 +134,14 @@ notify-failure:
   if: failure()
   steps:
     - uses: actions/checkout@v4
-    - run: npm install
+    - run: npm install -g @nextsight/nxs-cli
     - run: |
         {
           echo "Workflow: ${{ github.workflow }}"
           echo "Branch: ${{ github.ref_name }}"
           echo "Run URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           gh run view ${{ github.run_id }} 2>&1 || true
-        } | node cli/index.js ci analyze --stdin --notify slack --no-chat --json || true
+        } | nxs ci analyze --stdin --notify slack --no-chat --json || true
       env:
         GH_TOKEN: ${{ github.token }}
         GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
