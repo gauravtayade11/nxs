@@ -115,7 +115,7 @@ Examples:
         const ns = opts.namespace ? `-n ${opts.namespace}` : '';
         if (!opts.json) console.log(chalk.dim(`  Fetching pods for deployment: ${chalk.white(opts.deployment)}\n`));
 
-        const deployR = await run(`kubectl get deploy ${opts.deployment} ${ns} -o json 2>/dev/null`);
+        const deployR = await run(`kubectl get deploy "${opts.deployment}" ${ns} -o json 2>/dev/null`);
         if (!deployR.stdout?.trim()) {
           console.error(chalk.red(`  Deployment '${opts.deployment}' not found or kubectl not configured.`));
           process.exit(1);
@@ -165,8 +165,8 @@ Examples:
         const ns = opts.namespace ? `-n ${opts.namespace}` : '';
         if (!opts.json) console.log(chalk.dim(`  Fetching logs + describe for pod: ${chalk.white(opts.pod)}\n`));
         const [logsR, descR] = await Promise.all([
-          run(`kubectl logs ${opts.pod} ${ns} --previous 2>/dev/null || kubectl logs ${opts.pod} ${ns} 2>/dev/null`),
-          run(`kubectl describe pod ${opts.pod} ${ns} 2>/dev/null`),
+          run(`kubectl logs "${opts.pod}" ${ns} --previous 2>/dev/null || kubectl logs "${opts.pod}" ${ns} 2>/dev/null`),
+          run(`kubectl describe pod "${opts.pod}" ${ns} 2>/dev/null`),
         ]);
         const combined = [
           logsR.stdout ? `=== LOGS ===\n${logsR.stdout}` : '',

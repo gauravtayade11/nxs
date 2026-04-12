@@ -119,7 +119,7 @@ Examples:
       if (opts.cert) {
         if (!opts.json) console.log(chalk.dim(`  Checking TLS certificate for: ${chalk.white(opts.cert)}\n`));
         const { stdout, stderr } = await run(
-          `echo | openssl s_client -servername ${opts.cert} -connect ${opts.cert}:443 2>/dev/null | openssl x509 -noout -subject -issuer -dates 2>/dev/null`
+          `echo | openssl s_client -servername "${opts.cert}" -connect "${opts.cert}":443 2>/dev/null | openssl x509 -noout -subject -issuer -dates 2>/dev/null`
         );
         const output = (stdout || stderr || '').trim();
         if (!output) {
@@ -155,9 +155,9 @@ Examples:
         if (!opts.json) console.log(chalk.dim(`  Running connectivity check: ${chalk.white(`${host}:${port}`)}\n`));
 
         const checks = await Promise.all([
-          run(`ping -c 2 -W 2 ${host} 2>&1`),
-          run(`nslookup ${host} 2>&1`),
-          run(`nc -zv -w 3 ${host} ${port} 2>&1`),
+          run(`ping -c 2 -W 2 "${host}" 2>&1`),
+          run(`nslookup "${host}" 2>&1`),
+          run(`nc -zv -w 3 "${host}" "${port}" 2>&1`),
         ]);
 
         const [ping, dns, tcp] = checks;

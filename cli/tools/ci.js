@@ -220,12 +220,12 @@ Examples:
 
         // Try failed-only log first; fall back to full log for passing runs
         let logOutput = '';
-        const { stdout: failedLog, ok } = await run(`gh run view ${opts.run} --log-failed 2>/dev/null`, { timeout: 30000 });
+        const { stdout: failedLog, ok } = await run(`gh run view "${opts.run}" --log-failed 2>/dev/null`, { timeout: 30000 });
         if (ok && failedLog.trim()) {
           logOutput = failedLog;
         } else {
           // Run may have passed — fetch full log (first 500 lines)
-          const { stdout: fullLog, ok: fullOk } = await run(`gh run view ${opts.run} --log 2>/dev/null`, { timeout: 30000 });
+          const { stdout: fullLog, ok: fullOk } = await run(`gh run view "${opts.run}" --log 2>/dev/null`, { timeout: 30000 });
           if (!fullOk || !fullLog.trim()) {
             console.error(chalk.red(`  Could not fetch run ${opts.run}. Check the run ID and gh auth.`));
             console.error(chalk.dim('  Run: gh auth status'));

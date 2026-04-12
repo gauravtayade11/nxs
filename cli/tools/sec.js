@@ -128,7 +128,7 @@ Examples:
       // --image: run trivy locally and pipe output
       if (opts.image) {
         if (!opts.json) console.log(chalk.dim(`  Running trivy on image: ${chalk.white(opts.image)}\n`));
-        const { stdout, stderr } = await run(`trivy image --no-progress ${opts.image} 2>/dev/null`, { timeout: 300000 });
+        const { stdout, stderr } = await run(`trivy image --no-progress "${opts.image}" 2>/dev/null`, { timeout: 300000 });
         const output = stdout || stderr;
         if (!output.trim()) {
           console.error(chalk.red('  trivy returned no output.'));
@@ -143,7 +143,7 @@ Examples:
         const ns = opts.namespace ? `-n ${opts.namespace}` : '';
         if (!opts.json) console.log(chalk.dim(`  Fetching image from pod: ${chalk.white(opts.pod)}\n`));
 
-        const { stdout: podJson } = await run(`kubectl get pod ${opts.pod} ${ns} -o json 2>/dev/null`);
+        const { stdout: podJson } = await run(`kubectl get pod "${opts.pod}" ${ns} -o json 2>/dev/null`);
         if (!podJson) {
           console.error(chalk.red(`  Pod '${opts.pod}' not found or kubectl not configured.`));
           process.exit(1);
