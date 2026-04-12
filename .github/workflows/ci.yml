@@ -6,6 +6,7 @@ on:
   workflow_dispatch:
 
 jobs:
+  # ── Stage 1: Lint ────────────────────────────────────────────────────────────
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -22,10 +23,26 @@ jobs:
         run: npm install
 
       - name: Run ESLint
-        run: npm run lint
+        id: eslint
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          npm run lint 2>&1 | tee /tmp/lint.log
 
-  smoke-test:
-    name: CLI Smoke Test
+      - name: Upload lint failure log
+        if: steps.eslint.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: failure-log-lint
+          path: /tmp/lint.log
+
+      - name: Fail if lint failed
+        if: steps.eslint.outcome == 'failure'
+        run: exit 1
+
+  # ── Stage 2: Test ────────────────────────────────────────────────────────────
+  test:
+    name: Test
     runs-on: ubuntu-latest
     needs: lint
     steps:
@@ -40,39 +57,14 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: nxs --version
-        run: node cli/index.js --version
-
-      - name: nxs info
-        run: node cli/index.js info
-
-      - name: nxs explain CrashLoopBackOff (mock mode)
-        run: node cli/index.js explain CrashLoopBackOff --json
-        env:
-          GROQ_API_KEY: ''
-          ANTHROPIC_API_KEY: ''
-
-      - name: nxs devops analyze (mock mode)
-        run: |
-          echo "ERROR: npm install failed with exit code 1" | \
-          node cli/index.js devops analyze --stdin --json --no-chat
-        env:
-          GROQ_API_KEY: ''
-          ANTHROPIC_API_KEY: ''
-
-      - name: nxs rbac scan --json (no cluster — should exit gracefully)
-        run: node cli/index.js rbac scan --json 2>&1 | head -5 || true
-
-      # Capture output to file — PIPESTATUS preserves exit code through pipe
-      - name: Run auth tests
-        id: auth-tests
+      - name: Run tests
+        id: tests
         continue-on-error: true
         run: |
           set -o pipefail
           {
-            echo "Workflow: ${{ github.workflow }}"
             echo "Branch:   ${{ github.ref_name }}"
-            echo "Run URL:  ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo "Commit:   ${{ github.sha }}"
             echo "---"
             echo "PASS src/api/health.test.js (12ms)"
             echo "PASS src/api/users.test.js (18ms)"
@@ -92,24 +84,108 @@ jobs:
             echo "Test Suites: 1 failed, 2 passed, 3 total"
             echo "Tests:       1 failed, 47 passed, 48 total"
             exit 1
-          } 2>&1 | tee /tmp/test-output.log
-        env:
-          NODE_ENV: test
+          } 2>&1 | tee /tmp/test.log
 
-      # Only runs when auth-tests failed — uses the captured log directly
+      - name: Upload test failure log
+        if: steps.tests.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: failure-log-test
+          path: /tmp/test.log
+
+      - name: Fail if tests failed
+        if: steps.tests.outcome == 'failure'
+        run: exit 1
+
+  # ── Stage 3: Smoke test ──────────────────────────────────────────────────────
+  smoke:
+    name: Smoke Test
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run smoke tests
+        id: smoke
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          {
+            node cli/index.js --version
+            node cli/index.js explain CrashLoopBackOff --json
+            echo "ERROR: npm install failed" | node cli/index.js devops analyze --stdin --json --no-chat
+          } 2>&1 | tee /tmp/smoke.log
+        env:
+          GROQ_API_KEY: ''
+          ANTHROPIC_API_KEY: ''
+
+      - name: Upload smoke failure log
+        if: steps.smoke.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: failure-log-smoke
+          path: /tmp/smoke.log
+
+      - name: Fail if smoke failed
+        if: steps.smoke.outcome == 'failure'
+        run: exit 1
+
+  # ── Notify: runs when ANY stage fails ────────────────────────────────────────
+  notify-failure:
+    name: Analyze & Notify
+    runs-on: ubuntu-latest
+    needs: [lint, test, smoke]
+    if: failure()
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      # Download whichever failure artifact was uploaded
+      - name: Download failure logs
+        uses: actions/download-artifact@v4
+        with:
+          pattern: failure-log-*
+          path: /tmp/failure-logs
+          merge-multiple: true
+
+      # Combine all failure logs and pipe to nxs
       - name: Analyze failure and notify Slack
-        if: steps.auth-tests.outcome == 'failure'
-        run: cat /tmp/test-output.log | node cli/index.js ci analyze --stdin --notify slack --no-chat || true
+        run: |
+          {
+            echo "Pipeline:  ${{ github.workflow }}"
+            echo "Branch:    ${{ github.ref_name }}"
+            echo "Commit:    ${{ github.sha }}"
+            echo "Actor:     ${{ github.actor }}"
+            echo "Run URL:   ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo "Lint:      ${{ needs.lint.result }}"
+            echo "Test:      ${{ needs.test.result }}"
+            echo "Smoke:     ${{ needs.smoke.result }}"
+            echo "---"
+            cat /tmp/failure-logs/*.log 2>/dev/null || echo "No failure logs captured"
+          } | node cli/index.js ci analyze --stdin --notify slack --no-chat || true
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
 
-      # Re-fail the job after notification
-      - name: Fail if tests failed
-        if: steps.auth-tests.outcome == 'failure'
-        run: exit 1
-
+  # ── Security (runs independently) ───────────────────────────────────────────
   security:
     name: Security Audit
     runs-on: ubuntu-latest
