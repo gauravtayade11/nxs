@@ -86,12 +86,11 @@ export async function analyze(logText, systemPrompt, mockFn, opts = {}) {
   }
 
   // High-confidence rule match — skip AI entirely (saves API calls)
-  if (ruleResult && ruleResult.confidence >= 95 && !groqKey && !antKey) {
+  if (ruleResult && ruleResult.confidence >= 95) {
     return ruleResult;
   }
 
-  // When we have an API key, always use AI for best accuracy —
-  // but pass rule result as a hint in the prompt if available
+  // Rule matched but confidence < 95 — pass as a hint to AI for better accuracy
   let augmentedPrompt = systemPrompt + AI_SCHEMA_SUFFIX;
   if (ruleResult) {
     augmentedPrompt += `\n\nRule engine pre-match (confidence ${ruleResult.confidence}%): ${ruleResult.id ?? 'matched'}. Use this as a starting point but verify against the actual log.`;

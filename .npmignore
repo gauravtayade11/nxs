@@ -1,24 +1,8 @@
-# Frontend / web app (not part of CLI)
-src/
-public/
-index.html
-vite.config.js
-
-# Docs
-docs/
-site/
-docs.html
-mkdocs.yml
-netlify.toml
-requirements-docs.txt
-
 # Dev / local only
 .claude/
 .env
 .env.*
 content/
-DEMO*.md
-DEMO_PLAN.md
 VIDEO_DEMO.md
 TECHNICAL_GUIDE.md
 demo/logs/
@@ -26,7 +10,7 @@ demo/logs/
 # Dev scripts
 scripts/
 
-# Test / CI internals
+# CI
 .github/
 eslint.config.js
 *.log
