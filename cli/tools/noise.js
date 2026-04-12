@@ -192,16 +192,27 @@ Examples:
         const spinner = ora('Getting AI recommendations…').start();
         const context = JSON.stringify({ noisy, clean, days }, null, 2);
         try {
-          const result = await analyze(context, SYSTEM_PROMPT, null);
+          const result = await analyze(context, SYSTEM_PROMPT, () => ({
+            tool: 'noise', severity: 'warning',
+            summary: 'Alert noise analysis requires an AI key.',
+            noiseAlerts: noisy.map(a => ({ name: a.name, reason: 'High fire rate, low action rate', recommendation: 'tune' })),
+            actionableAlerts: clean.map(a => ({ name: a.name, reason: 'Low noise score' })),
+            rootCause: 'Add GROQ_API_KEY via nxs config --setup for full AI recommendations.',
+            fixSteps: '1. Run: nxs config --setup\n2. Add a free Groq key from console.groq.com\n3. Re-run: nxs noise --ai',
+            commands: noisy.map(a => `amtool silence add alertname="${a.name}" --duration=24h --comment="noise — review threshold"`).join('\n'),
+          }));
           spinner.stop();
           console.log(chalk.bold('\n  AI recommendations:\n'));
+          const toLines = (v) => Array.isArray(v) ? v.map(String) : String(v ?? '').split('\n');
+          if (result.rootCause) toLines(result.rootCause).filter(Boolean).forEach(l => console.log(`  ${chalk.hex('#94a3b8')(l)}`));
           if (result.fixSteps) {
-            result.fixSteps.split('\n').forEach((l) => console.log(`  ${chalk.hex('#94a3b8')(l)}`));
+            console.log('');
+            toLines(result.fixSteps).filter(l => l.trim() && !/^\d+$/.test(l.trim())).forEach(l => console.log(`  ${chalk.hex('#94a3b8')(l)}`));
           }
           console.log('');
-        } catch {
+        } catch (e) {
           spinner.stop();
-          console.log(chalk.dim('  AI unavailable — add --ai key via nxs config --setup\n'));
+          console.error(chalk.red(`  ✗ AI error: ${e.message}\n`));
         }
       }
 

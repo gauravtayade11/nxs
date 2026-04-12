@@ -13,42 +13,60 @@ metadata:
   name: nxs-demo-bad
 
 ---
-# CrashLoopBackOff — exits with error every restart
-apiVersion: v1
-kind: Pod
+# CrashLoopBackOff — Deployment so autopilot delete → controller recreates pod
+apiVersion: apps/v1
+kind: Deployment
 metadata:
   name: crash-loop-demo
   namespace: nxs-demo-bad
 spec:
-  containers:
-  - name: crash-loop-demo
-    image: alpine:3.18
-    command: ["/bin/sh", "-c", "echo 'ERROR: config file /etc/app/config.yaml not found'; exit 1"]
-    resources:
-      limits:
-        memory: "64Mi"
-        cpu: "100m"
-  restartPolicy: Always
+  replicas: 1
+  selector:
+    matchLabels:
+      app: crash-loop-demo
+  template:
+    metadata:
+      labels:
+        app: crash-loop-demo
+    spec:
+      containers:
+      - name: crash-loop-demo
+        image: alpine:3.18
+        command: ["/bin/sh", "-c", "echo 'ERROR: config file /etc/app/config.yaml not found'; exit 1"]
+        resources:
+          limits:
+            memory: "64Mi"
+            cpu: "100m"
+      restartPolicy: Always
 
 ---
-# OOMKilled — mmap touches every page at OS level, bypasses Python allocator, reliably OOMKills
-apiVersion: v1
-kind: Pod
+# OOMKilled — Deployment so autopilot can bump memory limit
+apiVersion: apps/v1
+kind: Deployment
 metadata:
   name: oom-demo
   namespace: nxs-demo-bad
 spec:
-  containers:
-  - name: oom-demo
-    image: python:3.11-alpine
-    command: ["python3", "-c", "import mmap,time; m=mmap.mmap(-1,200*1024*1024); [m.__setitem__(slice(i,i+1),b'x') for i in range(0,200*1024*1024,4096)]; time.sleep(999)"]
-    resources:
-      requests:
-        memory: "10Mi"
-      limits:
-        memory: "50Mi"
-        cpu: "100m"
-  restartPolicy: Always
+  replicas: 1
+  selector:
+    matchLabels:
+      app: oom-demo
+  template:
+    metadata:
+      labels:
+        app: oom-demo
+    spec:
+      containers:
+      - name: oom-demo
+        image: python:3.11-alpine
+        command: ["python3", "-c", "import mmap,time; m=mmap.mmap(-1,70*1024*1024); [m.__setitem__(slice(i,i+1),b'x') for i in range(0,70*1024*1024,4096)]; time.sleep(999)"]
+        resources:
+          requests:
+            memory: "10Mi"
+          limits:
+            memory: "50Mi"
+            cpu: "100m"
+      restartPolicy: Always
 
 ---
 # ImagePullBackOff — image does not exist

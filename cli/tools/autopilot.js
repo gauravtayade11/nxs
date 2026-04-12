@@ -49,10 +49,13 @@ async function getUnhealthyPods(ns) {
       for (const cs of statuses) {
         const waiting    = cs.state?.waiting;
         const terminated = cs.state?.terminated;
+        const lastReason = cs.lastState?.terminated?.reason;
         const restarts   = cs.restartCount ?? 0;
 
         let issue = null;
-        if (waiting?.reason)    issue = waiting.reason;
+        // Check lastState first — CrashLoopBackOff masks the real reason (e.g. OOMKilled)
+        if (lastReason === 'OOMKilled')  issue = 'OOMKilled';
+        else if (waiting?.reason)        issue = waiting.reason;
         else if (terminated?.reason === 'OOMKilled') issue = 'OOMKilled';
         else if (restarts >= 5) issue = 'HighRestarts';
 
@@ -90,9 +93,9 @@ async function applyFix(action, pod, dryRun) {
       depName = depNameR.stdout?.trim() ?? '';
     }
 
-    // Bump by 25%
+    // Bump by 2x — 25% is rarely enough; double gives headroom without waste
     const currentMi = pod.memLimit ? parseInt(pod.memLimit) : 256;
-    const newMi     = Math.ceil(currentMi * 1.25);
+    const newMi     = currentMi * 2;
     const cmd       = depName
       ? `kubectl set resources deployment/${depName} ${ns} --limits=memory=${newMi}Mi`
       : `# Could not find owning deployment for ${pod.name} — patch manually`;
