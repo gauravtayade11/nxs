@@ -1,0 +1,38 @@
+name: nxs — CI Failure Analyzer
+
+# Fires AFTER the entire CI workflow completes — run is fully done
+# Same as running: nxs ci analyze --run <id>  from your terminal
+on:
+  workflow_run:
+    workflows: ["nxs CI"]
+    types: [completed]
+
+jobs:
+  analyze:
+    name: Analyze & Notify
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'failure'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm install
+
+      - name: Analyze failure and notify Slack
+        run: |
+          {
+            echo "Pipeline: ${{ github.event.workflow_run.name }}"
+            echo "Branch:   ${{ github.event.workflow_run.head_branch }}"
+            echo "Commit:   ${{ github.event.workflow_run.head_sha }}"
+            echo "Actor:    ${{ github.event.workflow_run.actor.login }}"
+            echo "Run URL:  ${{ github.event.workflow_run.html_url }}"
+            echo "---"
+            gh run view ${{ github.event.workflow_run.id }} --log-failed 2>&1 || true
+          } | node cli/index.js ci analyze --stdin --notify slack --no-chat || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

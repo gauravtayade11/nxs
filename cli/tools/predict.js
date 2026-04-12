@@ -4,26 +4,43 @@
  * PVC capacity, and node pressure to surface at-risk workloads.
  */
 import chalk from 'chalk';
-import { printBanner, hr } from '../core/ui.js';
+import { printBanner } from '../core/ui.js';
 import { run } from '../core/exec.js';
 import { analyze } from '../core/ai.js';
 import { checkDeps } from '../core/deps.js';
 
-const SYSTEM_PROMPT = `You are a Kubernetes SRE predicting imminent failures based on current cluster state.
-Given resource usage data (CPU, memory, restarts, PVC capacity, node conditions), identify what is at risk.
+const SYSTEM_PROMPT = `You are a Kubernetes SRE. You will receive a list of at-risk pods with their actual names, namespaces, severities, and issues.
+
+Your job: give specific, actionable advice using the EXACT pod names and namespaces from the input. NEVER use placeholders like <pod-name> or <namespace> — always use the real values from the data.
 
 Return a JSON object with exactly this structure:
 {
   "tool": "predict",
   "severity": "<critical|warning|info>",
-  "summary": "<1-2 sentence summary of cluster risk>",
+  "summary": "<1-2 sentences: which specific pods are most at risk and why>",
   "atRisk": [
-    { "resource": "<pod/node/pvc name>", "risk": "<what will happen>", "timeframe": "<estimated time>", "recommendation": "<fix>" }
+    {
+      "resource": "<exact pod name from input>",
+      "risk": "<what will happen to this specific pod>",
+      "timeframe": "<imminent|under load|< 1h|< 24h>",
+      "recommendation": "<exact kubectl command using real pod name and namespace>"
+    }
   ],
-  "rootCause": "<underlying patterns driving the risk>",
-  "fixSteps": "<numbered preventive actions>",
-  "commands": "<kubectl commands to verify and fix>"
+  "rootCause": "<pattern across these specific pods — e.g. memory limits too low, missing requests, no HPA>",
+  "fixSteps": ["<step 1 with real pod name>", "<step 2 with real pod name>"],
+  "commands": ["<exact kubectl command 1>", "<exact kubectl command 2>"]
 }
+
+Rules:
+- Each pod in the input has a "recommendedFixes" array with pre-computed commands — use those EXACT commands in your response, do not invent different memory values
+- These are Pods, NOT Deployments — use "kubectl set resources pod/<name>" not "kubectl set resources deployment/<name>"
+- Memory flag is "--requests=memory=<value>" not "--requests=mem=<value>"
+- Use real pod names and namespaces from the input — never use placeholders
+- Do NOT suggest "kubectl apply -f <file>.yaml" — we don't have local files
+- Do NOT suggest "kubectl rollout restart" for standalone pods — use "kubectl delete pod" instead
+- fixSteps must be an array of strings, one action per item
+- commands must be an array of exact runnable kubectl commands from the recommendedFixes, one per item
+- Order atRisk by urgency: critical first, then warning
 
 Return ONLY valid JSON. No markdown fences.`;
 
@@ -68,7 +85,6 @@ function buildPodMap(risks) {
         score: r.score,
         findings: [],
         primaryRisk: r.risk,
-        // raw flags for recommendations generation
         _hasOOMKilled: false,
         _hasCrashLoop: false,
         _hasImagePull: false,
@@ -84,83 +100,93 @@ function buildPodMap(risks) {
     }
     const entry = map[key];
 
-    // Escalate severity
     if (r.severity === 'critical') entry.severity = 'critical';
-    if (r.score > entry.score) {
-      entry.score = r.score;
-      entry.primaryRisk = r.risk;
-    }
+    if (r.score > entry.score) { entry.score = r.score; entry.primaryRisk = r.risk; }
 
-    // Merge raw flags
     if (r._hasOOMKilled)  entry._hasOOMKilled  = true;
     if (r._hasCrashLoop)  entry._hasCrashLoop  = true;
     if (r._hasImagePull)  entry._hasImagePull  = true;
     if (r._hasPending)    entry._hasPending    = true;
     if (r._hpaExists)     entry._hpaExists     = true;
     if (r._restarts > entry._restarts) entry._restarts = r._restarts;
-    if (r._memPct    != null) entry._memPct    = r._memPct;
+    if (r._memPct     != null) entry._memPct     = r._memPct;
     if (r._memLimitMi != null) entry._memLimitMi = r._memLimitMi;
     if (r._memUsedMi  != null) entry._memUsedMi  = r._memUsedMi;
     if (r._requestMi  != null) entry._requestMi  = r._requestMi;
     if (r._limitMi    != null) entry._limitMi    = r._limitMi;
 
-    // Add finding text (deduplicate)
     const text = r._findingText ?? r.detail;
     if (text && !entry.findings.includes(text)) entry.findings.push(text);
+  }
+
+  // ── Clean up duplicate / noisy findings ──────────────────────────────────
+  for (const entry of Object.values(map)) {
+    entry.findings = entry.findings.filter(f => {
+      // Remove "N restarts — recurring crash" when Status line already shows restart count
+      if (/^\d+ restarts —/.test(f) && entry.findings.some(g => /^Status:.*\(\d+ restarts\)/.test(g))) return false;
+      // Remove "No horizontal autoscaling configured" — shown in recommendations instead
+      if (f === 'No horizontal autoscaling configured') return false;
+      return true;
+    });
   }
 
   return map;
 }
 
-// ── Generate per-pod recommendations + commands ──────────────────────────────
-function generateRecsAndCmds(podName, ns, entry) {
-  const recs = [];
-  const cmds = [];
+// ── Generate per-pod fix actions (rec + paired command) ──────────────────────
+function generateActions(podName, ns, entry) {
+  // Each action = { text, cmd }
+  const actions = [];
 
   if (entry._hasOOMKilled || (entry._memPct !== null && entry._memPct >= 90)) {
+    // Compute new limit — at least 1.5× current, rounded up to nearest 64Mi
     const baseMi = entry._memLimitMi ?? entry._limitMi ?? 128;
-    const newMi  = Math.max(Math.round(baseMi * 1.5 / 64) * 64, baseMi + 64);
-    recs.push(`Increase memory limit to at least ${newMi}Mi immediately`);
-    cmds.push(`kubectl set resources pod/${podName} --limits=memory=${newMi}Mi -n ${ns}`);
-  }
-
-  if (entry._requestMi != null && entry._limitMi != null && entry._limitMi > entry._requestMi * 1.5) {
-    recs.push(`Set request equal to limit for predictable scheduling`);
-    const targetMi = entry._limitMi;
-    if (!cmds.some(c => c.includes('requests'))) {
-      cmds.push(`kubectl set resources pod/${podName} --requests=memory=${targetMi}Mi --limits=memory=${targetMi}Mi -n ${ns}`);
+    const newMi  = Math.ceil(Math.max(baseMi * 1.5, baseMi + 64) / 64) * 64;
+    // One command sets both requests and limits — no conflict with ratio fix
+    actions.push({
+      text: `Increase memory limit to ${newMi}Mi (current ${baseMi}Mi is too low)`,
+      cmd:  `kubectl set resources pod/${podName} --requests=memory=${newMi}Mi --limits=memory=${newMi}Mi -n ${ns}`,
+    });
+    if (!entry._hpaExists) {
+      actions.push({ text: `Add HPA to handle traffic spikes automatically`, cmd: null });
     }
-  }
-
-  if (!entry._hpaExists && (entry._hasOOMKilled || (entry._memPct !== null && entry._memPct >= 75))) {
-    recs.push(`Add HPA if traffic is variable`);
+  } else if (entry._requestMi != null && entry._limitMi != null && entry._limitMi > entry._requestMi * 1.5) {
+    // Only suggest ratio fix when not already OOMKilling (avoids conflicting commands)
+    actions.push({
+      text: `Align memory request to limit — ${entry._requestMi}Mi → ${entry._limitMi}Mi gap misleads the scheduler`,
+      cmd:  `kubectl set resources pod/${podName} --requests=memory=${entry._limitMi}Mi --limits=memory=${entry._limitMi}Mi -n ${ns}`,
+    });
   }
 
   if (entry._hasCrashLoop || entry._restarts >= 5) {
-    recs.push(`Check application logs for the crash cause`);
-    cmds.push(`kubectl logs ${podName} -n ${ns} --previous`);
+    actions.push({
+      text: `Check crash logs to find the root cause`,
+      cmd:  `kubectl logs ${podName} -n ${ns} --previous`,
+    });
   }
 
   if (entry._hasImagePull) {
-    recs.push(`Verify image name and tag are correct`, `Add imagePullSecrets if using a private registry`);
-    cmds.push(`kubectl describe pod ${podName} -n ${ns}`);
+    actions.push({
+      text: `Verify image name/tag and registry credentials`,
+      cmd:  `kubectl describe pod ${podName} -n ${ns}`,
+    });
   }
 
   if (entry._hasPending) {
-    recs.push(`Check node resources and taints`);
-    cmds.push(`kubectl describe pod ${podName} -n ${ns}`);
+    actions.push({
+      text: `Check why pod can't be scheduled (node selector, taints, resources)`,
+      cmd:  `kubectl describe pod ${podName} -n ${ns}`,
+    });
   }
 
-  // Fallback
-  if (recs.length === 0) {
-    recs.push(`Inspect pod for issues`);
-    cmds.push(`kubectl describe pod ${podName} -n ${ns}`);
+  if (actions.length === 0) {
+    actions.push({ text: `Inspect pod for details`, cmd: `kubectl describe pod ${podName} -n ${ns}` });
   }
 
-  return { recs, cmds };
+  return actions;
 }
 
-// ── Render in article style ──────────────────────────────────────────────────
+// ── Render ───────────────────────────────────────────────────────────────────
 function renderArticleStyle(podMap, nsLabel, threshold) {
   const pods = Object.values(podMap).sort((a, b) => {
     if (a.severity !== b.severity) return a.severity === 'critical' ? -1 : 1;
@@ -168,69 +194,50 @@ function renderArticleStyle(podMap, nsLabel, threshold) {
   });
 
   if (pods.length === 0) {
-    console.log(chalk.green('\n  ✓ No imminent failures detected.\n'));
-    console.log(chalk.dim(`  All resources are below ${threshold}% of their limits.\n`));
-    console.log(hr() + '\n');
+    console.log(chalk.green('\n  ✓ No at-risk pods detected.\n'));
+    console.log(chalk.dim(`  All resources are below the ${threshold}% alert threshold.\n`));
     return;
   }
 
-  const divider = '  ' + chalk.dim('─'.repeat(54));
+  const div = '  ' + chalk.dim('─'.repeat(54));
 
   // ── Header ──
   console.log('');
-  const header = chalk.bold(`◈  PREDICT — Failure Prediction · namespace: ${nsLabel}`);
-  console.log(`  ${header}`);
-  console.log(divider);
+  console.log(`  ${chalk.bold(`◈  PREDICT — at-risk pods · namespace: ${nsLabel}`)}`);
+  console.log(div);
 
-  // ── Per-pod blocks ──
+  // ── Per-pod findings ──
   for (const pod of pods) {
     const podName = pod.resource.replace(/^pod\//, '');
-    const icon    = pod.severity === 'critical' ? chalk.red('✗') : chalk.yellow('⚠');
-    const badge   = pod.severity === 'critical'
+    const icon  = pod.severity === 'critical' ? chalk.red('✗') : chalk.yellow('⚠');
+    const badge = pod.severity === 'critical'
       ? chalk.bgRed.white.bold(' CRITICAL ')
       : chalk.bgYellow.black.bold(' WARNING  ');
 
-    // Right-align the badge at col ~54
     const gap = Math.max(1, 44 - podName.length);
     console.log(`\n  ${icon}  ${chalk.white.bold(podName)}${' '.repeat(gap)}${badge}`);
 
     for (const f of pod.findings) {
       console.log(`     ${chalk.hex('#94a3b8')(f)}`);
     }
-    console.log(`     ${chalk.dim('Risk:')} ${chalk.yellow(pod.primaryRisk)}`);
+    console.log(`     ${chalk.dim('→')} ${chalk.yellow(pod.primaryRisk)}`);
   }
 
-  // ── Recommendations ──
-  console.log('\n' + divider);
-  console.log('');
-  console.log(`  ${chalk.bold('RECOMMENDATIONS')}`);
-  console.log('');
+  // ── What to fix (recs + commands paired) ──
+  console.log('\n' + div);
+  console.log(`\n  ${chalk.bold('WHAT TO FIX')}\n`);
 
   for (const pod of pods) {
     const podName = pod.resource.replace(/^pod\//, '');
-    const { recs, cmds } = generateRecsAndCmds(podName, pod.namespace, pod);
-    pod._cmds = cmds;
+    const actions = generateActions(podName, pod.namespace, pod);
 
     console.log(`  ${chalk.white.bold(podName)}`);
-    recs.forEach((rec, i) => {
-      const num = chalk.dim(`${i + 1}.`);
-      console.log(`    ${num} ${chalk.hex('#94a3b8')(rec)}`);
-    });
+    for (const { text, cmd } of actions) {
+      console.log(`    ${chalk.dim('›')} ${chalk.hex('#94a3b8')(text)}`);
+      if (cmd) console.log(`      ${chalk.cyan(cmd)}`);
+    }
     console.log('');
   }
-
-  // ── Commands ready to copy ──
-  const allCmds = [...new Set(pods.flatMap(p => p._cmds ?? []))];
-  if (allCmds.length > 0) {
-    console.log(divider);
-    console.log('');
-    console.log(`  ${chalk.bold('COMMANDS READY TO COPY')}`);
-    console.log('');
-    allCmds.forEach(cmd => console.log(`    ${chalk.cyan(cmd)}`));
-    console.log('');
-  }
-
-  console.log(divider + '\n');
 }
 
 export function registerPredict(program) {
@@ -338,11 +345,13 @@ Examples:
           const containerStatuses = spec.status?.containerStatuses ?? [];
           for (const cs of containerStatuses) {
             const reason = cs.state?.waiting?.reason ?? cs.state?.terminated?.reason ?? '';
-            const lastReason = cs.lastState?.terminated?.reason ?? '';
+            const lastReason   = cs.lastState?.terminated?.reason   ?? '';
+            const lastExitCode = cs.lastState?.terminated?.exitCode ?? 0;
 
             if (['CrashLoopBackOff', 'OOMKilled', 'Error', 'ImagePullBackOff', 'ErrImagePull', 'CreateContainerError'].includes(reason)) {
               const isCritical = reason === 'OOMKilled' || reason === 'CrashLoopBackOff';
-              const isOOM      = reason === 'OOMKilled' || lastReason === 'OOMKilled';
+              // exit code 137 = SIGKILL = OOM killer on Linux
+              const isOOM      = reason === 'OOMKilled' || lastReason === 'OOMKilled' || lastExitCode === 137;
               const isCrash    = reason === 'CrashLoopBackOff';
               const isImgPull  = reason === 'ImagePullBackOff' || reason === 'ErrImagePull';
 
@@ -350,7 +359,7 @@ Examples:
               const lines = [];
               const restartSuffix = restarts > 0 ? ` (${restarts} restarts)` : '';
               lines.push(`Status: ${reason}${restartSuffix}`);
-              if (isOOM || lastReason === 'OOMKilled') lines.push(`Last termination: OOMKilled`);
+              if (isOOM) lines.push(`Last termination: OOMKilled`);
 
               // Memory numbers from spec
               const containers2 = spec.spec?.containers ?? [];
@@ -562,16 +571,97 @@ Examples:
       // ── AI deep analysis ─────────────────────────────────────────────────
       if (opts.ai && Object.keys(podMap).length > 0) {
         const spinner2 = ora('AI predicting failure timeline…').start();
-        const context  = JSON.stringify(risks.slice(0, 15), null, 2);
+
+        // Build a clean pod summary with pre-computed fix commands
+        const podSummary = Object.values(podMap).map(p => {
+          const podName = p.resource.replace(/^pod\//, '');
+          const actions = generateActions(podName, p.namespace, p);
+          return {
+            pod:        podName,
+            namespace:  p.namespace,
+            severity:   p.severity,
+            findings:   p.findings,
+            risk:       p.primaryRisk,
+            restarts:   p._restarts || undefined,
+            memLimitMi: p._memLimitMi ?? p._limitMi ?? undefined,
+            memPct:     p._memPct ?? undefined,
+            oomKilled:  p._hasOOMKilled || undefined,
+            requestMi:  p._requestMi ?? undefined,
+            // Pass the already-computed fix commands so AI uses exact values
+            recommendedFixes: actions.filter(a => a.cmd).map(a => ({
+              action: a.text,
+              command: a.cmd,
+            })),
+          };
+        });
+        const context = JSON.stringify(podSummary, null, 2);
         try {
           const result = await analyze(context, SYSTEM_PROMPT, null);
           spinner2.stop();
-          console.log(chalk.bold('  AI prediction:\n'));
-          if (result.summary) console.log(`  ${chalk.hex('#94a3b8')(result.summary)}\n`);
-          if (result.fixSteps) {
-            console.log(chalk.bold('  Preventive actions:\n'));
-            result.fixSteps.split('\n').forEach((l) => console.log(`  ${chalk.hex('#94a3b8')(l)}`));
+
+          const div = '  ' + chalk.dim('─'.repeat(54));
+          console.log('\n' + div);
+          console.log(`\n  ${chalk.bold('AI PREDICTION')}\n`);
+
+          if (result.summary) {
+            console.log(`  ${chalk.hex('#94a3b8')(result.summary)}\n`);
           }
+
+          if (Array.isArray(result.atRisk) && result.atRisk.length > 0) {
+            console.log(`  ${chalk.bold('Failure timeline:')}\n`);
+            for (const r of result.atRisk) {
+              const tf = r.timeframe ? chalk.yellow(` [${r.timeframe}]`) : '';
+              console.log(`  ${chalk.red('→')} ${chalk.white.bold(r.resource)}${tf}`);
+              if (r.risk)           console.log(`     ${chalk.hex('#94a3b8')(r.risk)}`);
+              if (r.recommendation) {
+                console.log(`     ${chalk.dim('Fix:')}`);
+                console.log(`       ${chalk.cyan(r.recommendation)}`);
+              }
+            }
+            console.log('');
+          }
+
+          if (result.rootCause) {
+            const lines = Array.isArray(result.rootCause)
+              ? result.rootCause
+              : result.rootCause.split('\n');
+            const filtered = lines.map(l => l.trim()).filter(l => l.length > 0);
+            if (filtered.length > 0) {
+              console.log(`  ${chalk.bold('Root cause pattern:')}\n`);
+              filtered.forEach(l => console.log(`  ${chalk.hex('#94a3b8')(l)}`));
+              console.log('');
+            }
+          }
+
+          if (result.fixSteps) {
+            const steps = Array.isArray(result.fixSteps)
+              ? result.fixSteps
+              : result.fixSteps.split('\n');
+            const filtered = steps.map(l => l.trim()).filter(l => l.length > 0);
+            if (filtered.length > 0) {
+              console.log(`  ${chalk.bold('Preventive actions:')}\n`);
+              filtered.forEach((l, i) => {
+                // Strip any existing number prefix from AI response, re-number cleanly
+                const text = l.replace(/^\d+\.\s*/, '');
+                console.log(`  ${chalk.dim(`${i + 1}.`)} ${chalk.hex('#94a3b8')(text)}`);
+              });
+              console.log('');
+            }
+          }
+
+          if (result.commands) {
+            const cmds = Array.isArray(result.commands)
+              ? result.commands
+              : result.commands.split(/\n|&&|;/);
+            const filtered = cmds.map(l => l.trim()).filter(l => l.length > 0);
+            if (filtered.length > 0) {
+              console.log(`  ${chalk.bold('Commands:')}\n`);
+              filtered.forEach(l => console.log(`    ${chalk.cyan(l)}`));
+              console.log('');
+            }
+          }
+
+          console.log(div + '\n');
         } catch {
           spinner2.stop();
         }
