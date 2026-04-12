@@ -265,7 +265,7 @@ async function notifySlack(result, toolModule, webhookUrl) {
     body: JSON.stringify(body),
   });
   const text = await resp.text();
-  if (!resp.ok || text !== 'ok') throw new Error(`Slack error: ${text}`);
+  if (!resp.ok) throw new Error(`Slack error ${resp.status}: ${text.slice(0, 120)}`);
 }
 
 function buildMarkdown(result, logText) {

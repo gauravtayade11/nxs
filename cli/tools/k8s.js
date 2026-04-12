@@ -129,7 +129,7 @@ Examples:
           const podsR = await run(`kubectl get pods ${ns} -l '${labelSelector}' -o jsonpath='{.items[*].metadata.name}' 2>/dev/null`);
           pods = podsR.stdout.trim().split(/\s+/).filter(Boolean);
         } catch {
-          console.error(chalk.red('  Failed to parse deployment info.'));
+          console.error(chalk.red('  Failed to parse deployment info. Check: kubectl version / kubectl auth'));
           process.exit(1);
         }
 
@@ -253,7 +253,7 @@ Examples:
       try {
         allEvents = JSON.parse(eventsR.stdout).items ?? [];
       } catch {
-        console.error(chalk.red('  Failed to parse events output.'));
+        console.error(chalk.red('  Failed to parse events output. Check: kubectl version / kubectl auth'));
         process.exit(1);
       }
 

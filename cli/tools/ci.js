@@ -186,7 +186,7 @@ Examples:
 
         let runs = [];
         try { runs = JSON.parse(listOut); } catch {
-          console.error(chalk.red('  Failed to parse run list.'));
+          console.error(chalk.red('  Failed to parse run list. Check: gh version / gh auth status'));
           process.exit(1);
         }
 

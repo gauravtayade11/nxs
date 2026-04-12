@@ -136,22 +136,26 @@ Examples:
       };
 
       setInterval(async () => {
-        const currentSize = statSync(file).size;
-        if (currentSize <= lastSize) return;
+        try {
+          const currentSize = statSync(file).size;
+          if (currentSize <= lastSize) return;
 
-        const newBytes = readFileSync(file).slice(lastSize);
-        lastSize = currentSize;
-        const newText = newBytes.toString('utf8');
+          const newBytes = readFileSync(file).slice(lastSize);
+          lastSize = currentSize;
+          const newText = newBytes.toString('utf8');
 
-        if (!ERROR_RE.test(newText)) return;
+          if (!ERROR_RE.test(newText)) return;
 
-        buffer += newText;
-        clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(async () => {
-          const chunk = buffer;
-          buffer = '';
-          await flush(chunk);
-        }, DEBOUNCE_MS);
+          buffer += newText;
+          clearTimeout(debounceTimer);
+          debounceTimer = setTimeout(async () => {
+            const chunk = buffer;
+            buffer = '';
+            await flush(chunk);
+          }, DEBOUNCE_MS);
+        } catch (err) {
+          console.error(chalk.yellow(`  ⚠ Watch error: ${err.message}`));
+        }
       }, 1000);
     });
 
