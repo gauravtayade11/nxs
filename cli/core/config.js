@@ -54,4 +54,7 @@ export function applyConfig() {
   const cfg = loadConfig();
   if (cfg.GROQ_API_KEY && !process.env.GROQ_API_KEY)           process.env.GROQ_API_KEY = cfg.GROQ_API_KEY;
   if (cfg.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) process.env.ANTHROPIC_API_KEY = cfg.ANTHROPIC_API_KEY;
+  if (cfg.SLACK_BOT_TOKEN && !process.env.SLACK_BOT_TOKEN)     process.env.SLACK_BOT_TOKEN = cfg.SLACK_BOT_TOKEN;
+  if (cfg.SLACK_CHANNEL && !process.env.SLACK_CHANNEL)         process.env.SLACK_CHANNEL = cfg.SLACK_CHANNEL;
+  if (cfg.SLACK_WEBHOOK_URL && !process.env.SLACK_WEBHOOK_URL) process.env.SLACK_WEBHOOK_URL = cfg.SLACK_WEBHOOK_URL;
 }

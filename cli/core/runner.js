@@ -188,34 +188,55 @@ export async function runHistory(toolModule, opts) {
   console.log('\n' + hr() + '\n');
 }
 
+function toSlackBullets(v) {
+  if (!v) return '_None_';
+  const items = Array.isArray(v)
+    ? v.map(String).filter(l => l.trim() && !/^\d+$/.test(l.trim()))
+    : String(v).split('\n').filter(l => l.trim());
+  return items.length ? items.map(l => `• ${l.replace(/^\d+\.\s*/, '').trim()}`).join('\n') : '_None_';
+}
+
+function toSlackText(v) {
+  if (!v) return '_None_';
+  if (Array.isArray(v)) return v.map(String).filter(l => l.trim() && !/^\d+$/.test(l.trim())).join('\n');
+  return String(v);
+}
+
 async function notifySlack(result, toolModule, webhookUrl) {
   const sev = result.severity ?? 'unknown';
   const sevEmoji = { critical: '🔴', warning: '🟡', info: '🟢' }[sev] ?? '⚪';
   const sevColor = { critical: '#e74c3c', warning: '#f39c12', info: '#2ecc71' }[sev] ?? '#95a5a6';
 
-  const body = {
-    attachments: [{
-      color: sevColor,
-      blocks: [
-        { type: 'header', text: { type: 'plain_text', text: `${sevEmoji} nxs ${toolModule.toUpperCase()} — ${sev.toUpperCase()}` } },
-        { type: 'section', text: { type: 'mrkdwn', text: `*Summary*\n${String(result.summary ?? '').slice(0, 500)}` } },
-        { type: 'section', text: { type: 'mrkdwn', text: `*Root Cause*\n${String(result.rootCause ?? '').slice(0, 500)}` } },
-        ...(result.commands ? [{
-          type: 'section',
-          text: { type: 'mrkdwn', text: `*Fix Commands*\n\`\`\`${String(result.commands).slice(0, 400)}\`\`\`` },
-        }] : []),
-        ...(result._mock ? [{ type: 'context', elements: [{ type: 'mrkdwn', text: `⚠ No AI key — showing extracted log details. Add GROQ_API_KEY for full diagnosis.` }] }] : []),
-        { type: 'context', elements: [{ type: 'mrkdwn', text: `nxs CLI · ${new Date().toISOString()}` }] },
-      ],
-    }],
-  };
+  const pipeline = result.pipeline ? `  |  Pipeline: *${result.pipeline}*` : '';
+  const step     = result.step     ? `  |  Step: *${result.step}*`         : '';
+
+  const fixText = toSlackBullets(result.fixSteps ?? result.commands);
+  const cmdText = result.commands && result.commands !== result.fixSteps
+    ? toSlackText(result.commands).split('\n').map(l => `\`${l.trim()}\``).filter(Boolean).join('\n')
+    : null;
+
+  const blocks = [
+    { type: 'header', text: { type: 'plain_text', text: `${sevEmoji} CI FAILURE — ${sev.toUpperCase()}` } },
+    { type: 'section', text: { type: 'mrkdwn', text: `*${toSlackText(result.summary).slice(0, 300)}*${pipeline}${step}` } },
+    { type: 'divider' },
+    { type: 'section', text: { type: 'mrkdwn', text: `:mag: *Root cause*\n${toSlackText(result.rootCause).slice(0, 500)}` } },
+    { type: 'divider' },
+    { type: 'section', text: { type: 'mrkdwn', text: `:wrench: *How to fix*\n${fixText.slice(0, 600)}` } },
+    ...(cmdText ? [{ type: 'section', text: { type: 'mrkdwn', text: `:terminal: *Commands*\n${cmdText.slice(0, 400)}` } }] : []),
+    ...(result._mock ? [{ type: 'context', elements: [{ type: 'mrkdwn', text: `⚠ No AI key — add GROQ_API_KEY for full diagnosis` }] }] : []),
+    { type: 'context', elements: [{ type: 'mrkdwn', text: `nxs CI analyzer · ${new Date().toISOString()}` }] },
+  ];
+
+  // Webhooks use top-level blocks; wrap in attachment for color sidebar
+  const body = { attachments: [{ color: sevColor, blocks }] };
 
   const resp = await fetch(webhookUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  if (!resp.ok) throw new Error(`Slack HTTP ${resp.status}`);
+  const text = await resp.text();
+  if (!resp.ok || text !== 'ok') throw new Error(`Slack error: ${text}`);
 }
 
 function buildMarkdown(result, logText) {
