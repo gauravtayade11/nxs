@@ -63,11 +63,12 @@ jobs:
       - name: nxs rbac scan --json (no cluster — should exit gracefully)
         run: node cli/index.js rbac scan --json 2>&1 | head -5 || true
 
-      # Capture output to file so we can pipe it to nxs on failure
+      # Capture output to file — PIPESTATUS preserves exit code through pipe
       - name: Run auth tests
         id: auth-tests
         continue-on-error: true
         run: |
+          set -o pipefail
           {
             echo "Workflow: ${{ github.workflow }}"
             echo "Branch:   ${{ github.ref_name }}"
