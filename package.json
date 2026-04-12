@@ -48,6 +48,7 @@
     "nxs": "./cli/index.js"
   },
   "scripts": {
+    "test": "node --test cli/tests/rules.test.js cli/tests/redact.test.js cli/tests/ai.test.js",
     "lint": "eslint .",
     "cli": "node cli/index.js",
     "check-version": "node scripts/check-version.js",

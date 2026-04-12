@@ -1,5 +1,5 @@
 /**
- * Rule engine — fast pattern matching for the top 20 K8s + CI errors.
+ * Rule engine — fast pattern matching for the top 19 K8s + CI errors.
  * Runs before AI. High-confidence matches (>= 90) skip the AI call entirely.
  * Always returns: { ...result, confidence, via: 'rules' }  OR  null if no match.
  */
