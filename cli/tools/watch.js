@@ -32,19 +32,38 @@ Focus on the MOST RECENT error. Be brief — this is real-time.
 
 Return ONLY valid JSON. No markdown fences.`;
 
-const ERROR_PATTERNS = [
-  /\b(ERROR|FATAL|CRITICAL|PANIC|EXCEPTION)\b/,
-  /exit(?:ed)?(?: with)?(?: code)? [1-9]/i,
-  /\b(OOMKilled|CrashLoopBackOff|ImagePullBackOff|ErrImagePull)\b/,
-  /\b(FAILED|BUILD FAILURE)\b/,
-  /\bException\b/,
-  /Traceback \(most recent call last\)/,
+// ── Severity classification ──────────────────────────────────────────────────
+const CRITICAL_PATTERNS = [
+  /\b(FATAL|CRITICAL|PANIC)\b/,
+  /\b(OOMKilled|segfault)\b/i,
   /panic:/i,
-  /segfault/i,
+  /out of memory/i,
+  /\bkilled\b.*\bsignal\b/i,
 ];
 
+const WARNING_PATTERNS = [
+  /\b(ERROR|EXCEPTION|FAILED|BUILD FAILURE)\b/,
+  /exit(?:ed)?(?: with)?(?: code)? [1-9]/i,
+  /\b(CrashLoopBackOff|ImagePullBackOff|ErrImagePull)\b/,
+  /\bException\b/,
+  /Traceback \(most recent call last\)/,
+  /\b(timeout|timed out|connection refused|connection reset)\b/i,
+];
+
+function classifySeverity(line) {
+  if (CRITICAL_PATTERNS.some(p => p.test(line))) return 'critical';
+  if (WARNING_PATTERNS.some(p  => p.test(line))) return 'warning';
+  return null;
+}
+
 function hasError(line) {
-  return ERROR_PATTERNS.some((p) => p.test(line));
+  return classifySeverity(line) !== null;
+}
+
+const SEV_RANK = { critical: 2, warning: 1, info: 0 };
+
+function meetsThreshold(lineSeverity, filterSeverity) {
+  return SEV_RANK[lineSeverity] >= SEV_RANK[filterSeverity ?? 'warning'];
 }
 
 function mockAnalyze() {
@@ -64,6 +83,7 @@ export function registerWatch(program) {
     .option('--interval <s>', 'File poll interval in seconds (default: 2)', '2')
     .option('--cooldown <s>', 'Min seconds between AI analyses to avoid spam (default: 30)', '30')
     .option('--context <n>', 'Lines of context to include per error analysis (default: 40)', '40')
+    .option('--severity <level>', 'Minimum severity to trigger AI: critical|warning (default: warning)', 'warning')
     .option('--notify <target>', 'Alert target after each analysis: slack')
     .addHelpText('after', `
 <source> is a log file path OR a shell command (wrap commands in quotes):
@@ -75,13 +95,22 @@ Examples:
   $ nxs watch "docker logs -f my-container"
   $ nxs watch app.log --notify slack
   $ nxs watch app.log --cooldown 60 --context 80
+  $ nxs watch app.log --severity critical          # only trigger AI on FATAL/PANIC/OOM
   $ nxs watch "kubectl logs -f deploy/api" --notify slack`)
     .action(async (source, opts) => {
       printBanner('Live log watcher');
 
-      const cooldown = Math.max(5, Number.parseInt(opts.cooldown, 10) || 30) * 1000;
-      const ctxLines = Math.max(10, Number.parseInt(opts.context, 10) || 40);
-      const interval = Math.max(1, Number.parseInt(opts.interval, 10) || 2) * 1000;
+      const cooldown    = Math.max(5, Number.parseInt(opts.cooldown, 10) || 30) * 1000;
+      const ctxLines    = Math.max(10, Number.parseInt(opts.context, 10) || 40);
+      const interval    = Math.max(1, Number.parseInt(opts.interval, 10) || 2) * 1000;
+      const minSeverity = ['critical', 'warning'].includes(opts.severity) ? opts.severity : 'warning';
+
+      if (!opts.json) {
+        const sevLabel = minSeverity === 'critical'
+          ? chalk.red('critical only')
+          : chalk.yellow('warning+');
+        console.log(chalk.dim(`  Severity filter: ${sevLabel}\n`));
+      }
 
       // Validate Slack config
       let slackUrl = null;
@@ -100,17 +129,17 @@ Examples:
       const isFile = existsSync(fp);
 
       if (isFile) {
-        await watchFile(fp, { interval, cooldown, ctxLines, slackUrl });
+        await watchFile(fp, { interval, cooldown, ctxLines, slackUrl, minSeverity });
       } else {
         // Treat as shell command
-        await watchCommand(source, { cooldown, ctxLines, slackUrl });
+        await watchCommand(source, { cooldown, ctxLines, slackUrl, minSeverity });
       }
     });
 }
 
 // ── File watcher ────────────────────────────────────────────────────────────
 
-async function watchFile(fp, { interval, cooldown, ctxLines, slackUrl }) {
+async function watchFile(fp, { interval, cooldown, ctxLines, slackUrl, minSeverity }) {
   let lastSize = statSync(fp).size;
   let lastAnalysis = 0;
   const buffer = [];
@@ -133,13 +162,18 @@ async function watchFile(fp, { interval, cooldown, ctxLines, slackUrl }) {
       buffer.push(...newLines);
       if (buffer.length > 500) buffer.splice(0, buffer.length - 500);
 
-      const errorLines = newLines.filter(hasError);
+      // Only consider lines that meet the severity threshold
+      const errorLines = newLines.filter(l => {
+        const sev = classifySeverity(l);
+        return sev !== null && meetsThreshold(sev, minSeverity);
+      });
       if (errorLines.length === 0) return;
 
       // Cooldown check
       const remaining = Math.ceil((cooldown - (Date.now() - lastAnalysis)) / 1000);
       if (Date.now() - lastAnalysis < cooldown) {
-        console.log(chalk.dim(`  [${new Date().toLocaleTimeString()}] Error detected (cooldown: ${remaining}s remaining)`));
+        const sev = classifySeverity(errorLines[0]);
+        console.log(chalk.dim(`  [${new Date().toLocaleTimeString()}] ${sev?.toUpperCase() ?? 'ERROR'} detected (cooldown: ${remaining}s remaining)`));
         return;
       }
 
@@ -158,7 +192,7 @@ async function watchFile(fp, { interval, cooldown, ctxLines, slackUrl }) {
 
 // ── Command watcher ─────────────────────────────────────────────────────────
 
-async function watchCommand(source, { cooldown, ctxLines, slackUrl }) {
+async function watchCommand(source, { cooldown, ctxLines, slackUrl, minSeverity }) {
   console.log(chalk.dim(`  Command:  ${chalk.white(source)}`));
   console.log(chalk.dim(`  Cooldown: ${cooldown / 1000}s between analyses`));
   console.log(chalk.dim(`  Context:  ${ctxLines} lines\n`));
@@ -174,11 +208,13 @@ async function watchCommand(source, { cooldown, ctxLines, slackUrl }) {
   const processLine = async (line) => {
     if (!line.trim()) return;
     // Show the live output (dim)
-    console.log(chalk.dim('  ' + line.slice(0, 140)));
+    const lineSev = classifySeverity(line);
+    const lineColor = lineSev === 'critical' ? chalk.red : lineSev === 'warning' ? chalk.yellow : chalk.dim;
+    console.log(lineColor('  ' + line.slice(0, 140)));
     buffer.push(line);
     if (buffer.length > 500) buffer.shift();
 
-    if (!hasError(line)) return;
+    if (!lineSev || !meetsThreshold(lineSev, minSeverity)) return;
     if (Date.now() - lastAnalysis < cooldown) return;
 
     lastAnalysis = Date.now();
@@ -211,10 +247,17 @@ async function watchCommand(source, { cooldown, ctxLines, slackUrl }) {
 // ── Shared analysis trigger ──────────────────────────────────────────────────
 
 async function triggerAnalysis(contextBuffer, errorLines, slackUrl) {
-  console.log(`\n  ${chalk.red('⚡ Error detected')}  ${chalk.dim(new Date().toLocaleTimeString())}`);
-  errorLines.slice(0, 3).forEach((l) =>
-    console.log(chalk.red('  ▸ ') + chalk.dim(l.slice(0, 140)))
-  );
+  const topSev = errorLines.reduce((max, l) => {
+    const s = classifySeverity(l);
+    return SEV_RANK[s] > SEV_RANK[max] ? s : max;
+  }, 'warning');
+  const sevLabel = topSev === 'critical' ? chalk.red.bold('CRITICAL') : chalk.yellow.bold('WARNING');
+  console.log(`\n  ${chalk.red('⚡')} ${sevLabel} detected  ${chalk.dim(new Date().toLocaleTimeString())}`);
+  errorLines.slice(0, 3).forEach((l) => {
+    const sev = classifySeverity(l);
+    const col = sev === 'critical' ? chalk.red : chalk.yellow;
+    console.log(col('  ▸ ') + chalk.dim(l.slice(0, 140)));
+  });
   console.log('');
 
   const context = contextBuffer.join('\n');

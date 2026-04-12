@@ -74,6 +74,7 @@ export function registerDevops(program) {
     .option('-o, --output <file>', 'Save analysis to a markdown file')
     .option('--fail-on <severity>', 'Exit code 1 if severity matches (critical|warning)')
     .option('--notify <target>', 'Notify after analysis: slack')
+    .option('--fast', 'Rules engine only — no AI call (instant, offline)')
     .addHelpText('after', `
 Examples:
   $ nxs devops analyze build.log

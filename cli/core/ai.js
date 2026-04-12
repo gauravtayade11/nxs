@@ -1,10 +1,19 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { matchRule } from './rules.js';
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ── Shared call logic ──────────────────────────────────────────────────────
 
 const GROQ_MAX_CHARS = 8000;
+
+// Suffix appended to every tool system prompt — asks AI for the new fields
+const AI_SCHEMA_SUFFIX = `
+
+Additionally, always include these fields in your JSON response:
+- "confidence": integer 0–100. How confident you are in this specific diagnosis given the log evidence. 95+ = textbook match. 70–94 = likely but needs verification. Below 70 = best guess.
+- "impact": string. What concretely fails or degrades: which service, how many users affected, for how long.
+- "suggestions": array of 2–3 strings. Proactive improvements BEYOND just fixing the immediate error — e.g. add monitoring, improve resilience, prevent recurrence.`;
 
 async function callGroq(systemPrompt, userMessage, jsonMode = true) {
   const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -46,26 +55,62 @@ async function callAnthropic(systemPrompt, messages) {
 
 /**
  * Analyze a log with a tool-specific system prompt.
- * @param {string} logText
- * @param {string} systemPrompt  - the tool module provides this
- * @param {function} mockFn      - fallback when no API key
+ *
+ * Flow:
+ *   1. Rule engine  — instant, no API call, confidence always set
+ *   2. If fast=true → return rule result (or mock if no match)
+ *   3. If confidence >= 95 from rules → return rule result (skip AI)
+ *   4. Otherwise → call Groq / Anthropic with augmented prompt
+ *
+ * @param {string}   logText
+ * @param {string}   systemPrompt  - the tool module provides this
+ * @param {function} mockFn        - fallback when no API key
+ * @param {object}   [opts]        - { fast: bool }
  */
-export async function analyze(logText, systemPrompt, mockFn) {
+export async function analyze(logText, systemPrompt, mockFn, opts = {}) {
   const groqKey = process.env.GROQ_API_KEY;
   const antKey  = process.env.ANTHROPIC_API_KEY;
 
+  // ── Rule engine (always runs first) ──────────────────────────────────────
+  const ruleResult = matchRule(logText);
+
+  // --fast / performance mode: rules only, no AI
+  if (opts.fast) {
+    if (ruleResult) return ruleResult;
+    // No rule matched — fall back to mock
+    const result = mockFn(logText);
+    result._mock = true;
+    result.confidence = result.confidence ?? 40;
+    result.via = 'mock';
+    return result;
+  }
+
+  // High-confidence rule match — skip AI entirely (saves API calls)
+  if (ruleResult && ruleResult.confidence >= 95 && !groqKey && !antKey) {
+    return ruleResult;
+  }
+
+  // When we have an API key, always use AI for best accuracy —
+  // but pass rule result as a hint in the prompt if available
+  let augmentedPrompt = systemPrompt + AI_SCHEMA_SUFFIX;
+  if (ruleResult) {
+    augmentedPrompt += `\n\nRule engine pre-match (confidence ${ruleResult.confidence}%): ${ruleResult.id ?? 'matched'}. Use this as a starting point but verify against the actual log.`;
+  }
+
+  // ── Groq ──────────────────────────────────────────────────────────────────
   if (groqKey) {
     let input = logText;
     let truncated = false;
     if (input.length > GROQ_MAX_CHARS) { input = input.slice(0, GROQ_MAX_CHARS); truncated = true; }
     try {
-      const raw = await callGroq(systemPrompt, `Analyze this log:\n\n${input}`);
+      const raw = await callGroq(augmentedPrompt, `Analyze this log:\n\n${input}`);
       const result = JSON.parse(raw);
       if (truncated) result._truncated = true;
+      result.via = 'ai-groq';
+      if (result.confidence == null) result.confidence = 75; // AI didn't include it — default
       return result;
     } catch (groqErr) {
       const msg = groqErr.message ?? '';
-      // Rate limit or quota — fall through to Anthropic/mock
       const isFallback = msg.includes('rate_limit') || msg.includes('Request too large') ||
                          msg.includes('quota') || msg.includes('fetch failed') ||
                          msg.includes('ENOTFOUND') || msg.includes('ECONNREFUSED') ||
@@ -73,38 +118,55 @@ export async function analyze(logText, systemPrompt, mockFn) {
                          msg.includes('failed_generation');
       if (isFallback) {
         if (!antKey) {
-          // Fall to mock with a note
+          // Use rule result if available, else mock
+          if (ruleResult) { ruleResult._warning = `Groq unavailable (${msg.slice(0, 60)}). Showing rule-matched response.`; return ruleResult; }
           const result = mockFn(logText);
-          result._warning = `Groq unavailable (${msg.slice(0, 80)}). Showing mock response.`;
+          result._warning = `Groq unavailable (${msg.slice(0, 60)}). Showing mock response.`;
+          result.confidence = result.confidence ?? 40;
+          result.via = 'mock';
           return result;
         }
-        // fall through to Anthropic below
+        // fall through to Anthropic
       } else {
-        throw groqErr; // re-throw non-recoverable errors (bad key, server error, bad JSON)
+        throw groqErr;
       }
     }
   }
 
+  // ── Anthropic ─────────────────────────────────────────────────────────────
   if (antKey) {
     try {
-      const raw = await callAnthropic(systemPrompt, `Analyze this log:\n\n${logText}`);
-      return JSON.parse(raw);
+      const raw = await callAnthropic(augmentedPrompt, `Analyze this log:\n\n${logText}`);
+      const result = JSON.parse(raw);
+      result.via = 'ai-anthropic';
+      if (result.confidence == null) result.confidence = 75;
+      return result;
     } catch (antErr) {
       const msg = antErr.message ?? '';
       const isFallback = msg.includes('rate_limit') || msg.includes('overloaded') ||
                          msg.includes('fetch failed') || msg.includes('ENOTFOUND');
       if (isFallback) {
+        if (ruleResult) { ruleResult._warning = `Anthropic unavailable. Showing rule-matched response.`; return ruleResult; }
         const result = mockFn(logText);
-        result._warning = `Anthropic unavailable (${msg.slice(0, 80)}). Showing mock response.`;
+        result._warning = `Anthropic unavailable (${msg.slice(0, 60)}). Showing mock response.`;
+        result.confidence = result.confidence ?? 40;
+        result.via = 'mock';
         return result;
       }
       throw antErr;
     }
   }
 
-  // No API keys — mock mode
+  // ── No API keys: prefer rule result over mock ─────────────────────────────
+  if (ruleResult) {
+    ruleResult._mock = true; // triggers demo mode banner
+    return ruleResult;
+  }
+
   const result = mockFn(logText);
   result._mock = true;
+  result.confidence = result.confidence ?? 40;
+  result.via = 'mock';
   return result;
 }
 

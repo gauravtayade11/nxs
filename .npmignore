@@ -1,10 +1,16 @@
 # Frontend / web app (not part of CLI)
 src/
 public/
-docs/
-docs.html
 index.html
 vite.config.js
+
+# Docs
+docs/
+site/
+docs.html
+mkdocs.yml
+netlify.toml
+requirements-docs.txt
 
 # Dev / local only
 .claude/
@@ -16,6 +22,9 @@ DEMO_PLAN.md
 VIDEO_DEMO.md
 TECHNICAL_GUIDE.md
 demo/logs/
+
+# Dev scripts
+scripts/
 
 # Test / CI internals
 .github/

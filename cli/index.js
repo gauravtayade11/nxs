@@ -271,6 +271,165 @@ program
     console.log(hr() + '\n');
   });
 
+// ── nxs test ─────────────────────────────────────────────────────────────────
+
+program
+  .command('test [scenario]')
+  .description('Run a built-in test scenario through the full analysis pipeline')
+  .option('--list', 'List all available test scenarios')
+  .option('-j, --json', 'Output as JSON')
+  .addHelpText('after', `
+Scenarios:
+  crashloop    Kubernetes CrashLoopBackOff
+  oomkilled    Kubernetes OOMKilled (exit code 137)
+  imagepull    Kubernetes ImagePullBackOff
+  pending      Kubernetes pod stuck in Pending
+  evicted      Kubernetes pod evicted (node pressure)
+  rbac         Kubernetes RBAC forbidden
+  ci-npm       npm test failure in GitHub Actions
+  ci-docker    Docker registry auth failure
+  ci-module    ModuleNotFoundError in CI
+  ci-timeout   CI step timeout
+
+Examples:
+  $ nxs test crashloop
+  $ nxs test ci-npm
+  $ nxs test --list
+  $ nxs test crashloop --json`)
+  .action(async (scenario, opts) => {
+    const { matchRule, RULES } = await import('./core/rules.js');
+    const { printResult } = await import('./core/ui.js');
+
+    const SCENARIOS = {
+      'crashloop': {
+        label: 'Kubernetes CrashLoopBackOff',
+        log: `Warning  BackOff    2m    kubelet  Back-off restarting failed container
+Normal   Pulled     2m    kubelet  Successfully pulled image "my-app:latest"
+Warning  Failed     2m    kubelet  Error: failed to create containerd task: CrashLoopBackOff
+Error from server: container "my-app" in pod "my-app-7d4f9b5-xk2p9" is waiting to start: CrashLoopBackOff`,
+      },
+      'oomkilled': {
+        label: 'Kubernetes OOMKilled',
+        log: `Last State: Terminated
+  Reason:    OOMKilled
+  Exit Code: 137
+  Started:   Mon, 12 Apr 2026 10:22:14 +0000
+  Finished:  Mon, 12 Apr 2026 10:22:51 +0000
+Limits:
+  memory: 256Mi
+Requests:
+  memory: 128Mi`,
+      },
+      'imagepull': {
+        label: 'Kubernetes ImagePullBackOff',
+        log: `Warning  Failed    45s   kubelet  Failed to pull image "private-registry.example.com/my-app:v2.1.0": rpc error: code = Unknown desc = pull access denied for private-registry.example.com/my-app, repository does not exist or may require 'docker login': denied: access forbidden
+Warning  Failed    45s   kubelet  Error: ErrImagePull
+Warning  BackOff   30s   kubelet  Back-off pulling image "private-registry.example.com/my-app:v2.1.0"
+Warning  Failed    30s   kubelet  Error: ImagePullBackOff`,
+      },
+      'pending': {
+        label: 'Kubernetes Pod Pending',
+        log: `Status:         Pending
+Events:
+  Warning  FailedScheduling  65s   default-scheduler  0/3 nodes are available: 1 Insufficient cpu, 2 Insufficient memory. preemption: 0/3 nodes are available: 3 No preemption victims found for incoming pod.`,
+      },
+      'evicted': {
+        label: 'Kubernetes Pod Evicted',
+        log: `Status:    Failed
+Reason:    Evicted
+Message:   The node was low on resource: memory. Threshold quantity: 100Mi, available: 48Mi. Container my-app was using 210Mi, request is 64Mi, limit is 256Mi.
+Events:
+  Warning  Evicted   5s    kubelet  The node was low on resource: memory. DiskPressure condition is True.`,
+      },
+      'rbac': {
+        label: 'Kubernetes RBAC Forbidden',
+        log: `Error from server (Forbidden): pods is forbidden: User "system:serviceaccount:production:my-app" cannot list resource "pods" in API group "" in the namespace "production"
+RBAC: access denied`,
+      },
+      'ci-npm': {
+        label: 'CI: npm test failure',
+        log: `Run npm test
+  npm test
+  shell: /usr/bin/bash -e {0}
+FAIL src/auth/auth.service.spec.ts
+  ● AuthService › login › should return 401 for invalid credentials
+    expect(received).toBe(expected)
+    Expected: 401
+    Received: 500
+Tests Suites: 1 failed, 3 passed, 4 total
+Tests:         1 failed, 42 passed, 43 total
+Process completed with exit code 1`,
+      },
+      'ci-docker': {
+        label: 'CI: Docker registry auth failure',
+        log: `Run docker push my-registry.example.com/my-app:latest
+Error response from daemon: unauthorized: authentication required
+Error: Process completed with exit code 1`,
+      },
+      'ci-module': {
+        label: 'CI: ModuleNotFoundError',
+        log: `Run python -m pytest tests/
+ModuleNotFoundError: No module named 'requests_toolbelt'
+ERROR tests/test_api.py - ModuleNotFoundError: No module named 'requests_toolbelt'
+Process completed with exit code 1`,
+      },
+      'ci-timeout': {
+        label: 'CI: Step timeout',
+        log: `Run npm run integration-tests
+...
+Error: The operation was canceled.
+##[error]The job running on runner GitHub Actions 11 has exceeded the maximum execution time of 360 minutes.
+##[error]The runner has received a shutdown signal. This can happen when the runner service is stopped, or a manually started runner is canceled.`,
+      },
+    };
+
+    if (opts.list) {
+      if (!opts.json) {
+        printBanner('Test mode');
+        console.log(hr());
+        console.log(chalk.bold('\n  Available test scenarios:\n'));
+        Object.entries(SCENARIOS).forEach(([key, s]) => {
+          console.log(`  ${chalk.cyan(key.padEnd(14))} ${chalk.dim(s.label)}`);
+        });
+        console.log(chalk.dim('\n  Usage: nxs test <scenario>\n'));
+      } else {
+        console.log(JSON.stringify(Object.entries(SCENARIOS).map(([id, s]) => ({ id, label: s.label })), null, 2));
+      }
+      return;
+    }
+
+    if (!scenario) {
+      console.error(chalk.red('  Provide a scenario name. Run: nxs test --list\n'));
+      process.exit(1);
+    }
+
+    const sc = SCENARIOS[scenario.toLowerCase()];
+    if (!sc) {
+      console.error(chalk.red(`  Unknown scenario: "${scenario}". Run: nxs test --list\n`));
+      process.exit(1);
+    }
+
+    const result = matchRule(sc.log);
+
+    if (!result) {
+      console.error(chalk.red(`  No rule matched for scenario "${scenario}". This is unexpected.\n`));
+      process.exit(1);
+    }
+
+    if (opts.json) {
+      console.log(JSON.stringify({ scenario, label: sc.label, ...result }, null, 2));
+      return;
+    }
+
+    printBanner('Test mode');
+    console.log(chalk.dim(`  Scenario: ${chalk.white(scenario)}  —  ${sc.label}\n`));
+    console.log(chalk.dim('  Sample log:\n'));
+    sc.log.split('\n').slice(0, 4).forEach(l => console.log(chalk.dim('  │ ') + chalk.dim(l.slice(0, 100))));
+    console.log('');
+
+    printResult(result);
+  });
+
 // ── nxs update ────────────────────────────────────────────────────────────
 
 program

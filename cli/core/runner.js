@@ -8,7 +8,7 @@ import { resolve }                  from 'node:path';
 import chalk                        from 'chalk';
 import ora                          from 'ora';
 import { analyze, chat }            from './ai.js';
-import { addHistory }               from './config.js';
+import { addHistory, getPatternFrequency } from './config.js';
 import { printResult, readStdin, prompt } from './ui.js';
 import { redact, warnIfSensitive }  from './redact.js';
 
@@ -72,7 +72,7 @@ export async function runAnalyze(toolModule, systemPrompt, mockFn, file, opts) {
   }
 
   if (opts.json) {
-    const result = await analyze(logText, systemPrompt, mockFn);
+    const result = await analyze(logText, systemPrompt, mockFn, { fast: !!opts.fast });
     console.log(JSON.stringify(result, null, 2));
     // --notify still runs in JSON mode (e.g. CI workflows)
     if (opts.notify === 'slack') {
@@ -88,10 +88,15 @@ export async function runAnalyze(toolModule, systemPrompt, mockFn, file, opts) {
   const onSigint = () => { spinner.stop(); console.log('\n' + chalk.dim('  Interrupted.\n')); process.exit(0); };
   process.once('SIGINT', onSigint);
 
+  if (opts.fast && !opts.json) {
+    console.log(chalk.dim('  ⚡ Fast mode — using rule engine only (no AI)\n'));
+  }
+
   let result;
   try {
-    result = await analyze(logText, systemPrompt, mockFn);
-    spinner.succeed(chalk.green('Analysis complete'));
+    result = await analyze(logText, systemPrompt, mockFn, { fast: !!opts.fast });
+    const via = result.via === 'rules' ? chalk.cyan('rules engine') : result.via === 'ai-groq' ? chalk.green('Groq AI') : result.via === 'ai-anthropic' ? chalk.magenta('Claude AI') : chalk.dim('demo');
+    spinner.succeed(chalk.green('Analysis complete') + chalk.dim(`  via ${via}`));
   } catch (err) {
     spinner.fail(chalk.red(`Analysis failed: ${err.message}`));
     if (err.message?.includes('ENOTFOUND') || err.message?.includes('fetch failed')) {
@@ -105,7 +110,14 @@ export async function runAnalyze(toolModule, systemPrompt, mockFn, file, opts) {
   process.off('SIGINT', onSigint);
 
   addHistory(toolModule, logText, result);
-  printResult(result);
+
+  // Pattern frequency — look back 7 days
+  const errorTag = result.via === 'rules' && result.id
+    ? result.id
+    : `${result.tool ?? toolModule}:${result.severity ?? 'info'}`;
+  const freq = getPatternFrequency(errorTag, 7);
+
+  printResult(result, freq);
 
   // --notify slack: post result to Slack webhook
   if (opts.notify === 'slack') {
@@ -210,24 +222,41 @@ async function notifySlack(result, toolModule, webhookUrl) {
   const pipeline = result.pipeline ? `  |  Pipeline: *${result.pipeline}*` : '';
   const step     = result.step     ? `  |  Step: *${result.step}*`         : '';
 
+  // Confidence bar for Slack
+  const conf     = result.confidence != null ? Math.round(result.confidence) : null;
+  const confBar  = conf != null ? `${'█'.repeat(Math.round(conf / 10))}${'░'.repeat(10 - Math.round(conf / 10))} ${conf}%` : '';
+  const confText = conf != null ? `\n:bar_chart: *Confidence:* \`${confBar}\`` : '';
+
+  const via      = result.via === 'rules' ? 'rules engine' : result.via === 'ai-groq' ? 'Groq AI' : result.via === 'ai-anthropic' ? 'Claude AI' : 'demo';
+
   const fixText = toSlackBullets(result.fixSteps ?? result.commands);
   const cmdText = result.commands && result.commands !== result.fixSteps
     ? toSlackText(result.commands).split('\n').map(l => `\`${l.trim()}\``).filter(Boolean).join('\n')
     : null;
 
+  // Impact section
+  const impactText = result.impact
+    ? `\n\n:zap: *Impact*\n${toSlackText(result.impact).slice(0, 400)}`
+    : '';
+
+  // Suggestions section
+  const suggestions = result.suggestions?.length > 0
+    ? toSlackBullets(result.suggestions).slice(0, 400)
+    : null;
+
   const blocks = [
-    { type: 'header', text: { type: 'plain_text', text: `${sevEmoji} CI FAILURE — ${sev.toUpperCase()}` } },
-    { type: 'section', text: { type: 'mrkdwn', text: `*${toSlackText(result.summary).slice(0, 300)}*${pipeline}${step}` } },
+    { type: 'header', text: { type: 'plain_text', text: `${sevEmoji} ${(result.tool ?? toolModule ?? 'nxs').toUpperCase()} — ${sev.toUpperCase()}` } },
+    { type: 'section', text: { type: 'mrkdwn', text: `*${toSlackText(result.summary).slice(0, 300)}*${pipeline}${step}${confText}` } },
     { type: 'divider' },
-    { type: 'section', text: { type: 'mrkdwn', text: `:mag: *Root cause*\n${toSlackText(result.rootCause).slice(0, 500)}` } },
+    { type: 'section', text: { type: 'mrkdwn', text: `:mag: *Root cause*\n${toSlackText(result.rootCause).slice(0, 500)}${impactText}` } },
     { type: 'divider' },
     { type: 'section', text: { type: 'mrkdwn', text: `:wrench: *How to fix*\n${fixText.slice(0, 600)}` } },
     ...(cmdText ? [{ type: 'section', text: { type: 'mrkdwn', text: `:terminal: *Commands*\n${cmdText.slice(0, 400)}` } }] : []),
-    ...(result._mock ? [{ type: 'context', elements: [{ type: 'mrkdwn', text: `⚠ No AI key — add GROQ_API_KEY for full diagnosis` }] }] : []),
-    { type: 'context', elements: [{ type: 'mrkdwn', text: `nxs CI analyzer · ${new Date().toISOString()}` }] },
+    ...(suggestions ? [{ type: 'section', text: { type: 'mrkdwn', text: `:rocket: *Suggestions*\n${suggestions}` } }] : []),
+    ...(result._mock ? [{ type: 'context', elements: [{ type: 'mrkdwn', text: `⚠ Demo mode — add GROQ_API_KEY for real AI diagnosis` }] }] : []),
+    { type: 'context', elements: [{ type: 'mrkdwn', text: `nxs · ${via} · ${new Date().toISOString()}` }] },
   ];
 
-  // Webhooks use top-level blocks; wrap in attachment for color sidebar
   const body = { attachments: [{ color: sevColor, blocks }] };
 
   const resp = await fetch(webhookUrl, {
@@ -246,17 +275,20 @@ function buildMarkdown(result, logText) {
     if (Array.isArray(v)) return v.filter((x) => x && typeof x !== 'number').map((x, i) => `${i + 1}. ${x}`).join('\n');
     return String(v ?? '');
   };
+  const conf = result.confidence != null ? ` | **Confidence:** ${result.confidence}%` : '';
+  const via  = result.via ? ` | **Via:** ${result.via}` : '';
+
   return `# nxs Analysis — ${(result.tool ?? 'unknown').toUpperCase()}
 
 **Date:** ${ts}
-**Severity:** ${result.severity ?? 'unknown'}
+**Severity:** ${result.severity ?? 'unknown'}${conf}${via}
 ${result.resource ? `**Resource:** ${result.resource}  ` : ''}
 ${result.namespace && result.namespace !== 'unknown' ? `**Namespace:** ${result.namespace}  ` : ''}
 
 ## Summary
 
 ${toMd(result.summary)}
-
+${result.impact ? `\n## Impact\n\n${toMd(result.impact)}\n` : ''}
 ## Root Cause
 
 ${toMd(result.rootCause)}
@@ -270,7 +302,7 @@ ${toMd(result.fixSteps)}
 \`\`\`bash
 ${toMd(result.commands)}
 \`\`\`
-
+${result.suggestions?.length > 0 ? `\n## Suggestions\n\n${(Array.isArray(result.suggestions) ? result.suggestions : [result.suggestions]).map((s, i) => `${i + 1}. ${s}`).join('\n')}\n` : ''}
 ## Log Input (excerpt)
 
 \`\`\`
