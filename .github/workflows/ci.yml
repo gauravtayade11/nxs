@@ -115,7 +115,7 @@ jobs:
             echo "Lint:     ${{ needs.lint.result }}"
             echo "Smoke:    ${{ needs.smoke-test.result }}"
             echo "---"
-            gh run view ${{ github.run_id }} 2>&1 || true
+            gh run view ${{ github.run_id }} --log-failed 2>&1 || true
           } | node cli/index.js ci analyze --stdin --notify slack --no-chat || true
         env:
           GH_TOKEN: ${{ github.token }}
