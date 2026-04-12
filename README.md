@@ -4,6 +4,9 @@
 [![npm downloads](https://img.shields.io/npm/dm/@nextsight/nxs-cli)](https://www.npmjs.com/package/@nextsight/nxs-cli)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/gauravtayade11/nxs?style=social)](https://github.com/gauravtayade11/nxs)
+[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=gauravtayade11_nxs&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=gauravtayade11_nxs)
+[![Coverage](https://sonarcloud.io/api/project_badges/measure?project=gauravtayade11_nxs&metric=coverage)](https://sonarcloud.io/summary/new_code?id=gauravtayade11_nxs)
+[![Security Rating](https://sonarcloud.io/api/project_badges/measure?project=gauravtayade11_nxs&metric=security_rating)](https://sonarcloud.io/summary/new_code?id=gauravtayade11_nxs)
 
 > Paste any DevOps error → get root cause + exact fix command in seconds.
 
