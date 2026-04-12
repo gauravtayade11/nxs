@@ -45,7 +45,7 @@ function sectionHeader(title, icon) {
 // ── Kubernetes ─────────────────────────────────────────────────────────────
 
 export async function fetchK8sStatus(namespace = null) {
-  const ns = namespace ? `-n ${namespace}` : '--all-namespaces';
+  const ns = namespace ? `-n "${namespace}"` : '--all-namespaces';
 
   const [nodesR, podsR, deploymentsR, eventsR] = await Promise.all([
     run('kubectl get nodes -o wide 2>/dev/null'),
@@ -405,7 +405,7 @@ Examples:
 
       const print = async () => {
         const spin = ora({ text: 'Fetching pods...', color: 'cyan' }).start();
-        const ns = opts.namespace ? `-n ${opts.namespace}` : '--all-namespaces';
+        const ns = opts.namespace ? `-n "${opts.namespace}"` : '--all-namespaces';
         const r  = await run(`kubectl get pods ${ns} 2>/dev/null`);
         spin.stop();
 

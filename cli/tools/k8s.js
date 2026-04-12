@@ -112,7 +112,7 @@ Examples:
 
       // --deployment: fetch logs from all pods in the deployment
       if (opts.deployment) {
-        const ns = opts.namespace ? `-n ${opts.namespace}` : '';
+        const ns = opts.namespace ? `-n "${opts.namespace}"` : '';
         if (!opts.json) console.log(chalk.dim(`  Fetching pods for deployment: ${chalk.white(opts.deployment)}\n`));
 
         const deployR = await run(`kubectl get deploy "${opts.deployment}" ${ns} -o json 2>/dev/null`);
@@ -162,7 +162,7 @@ Examples:
 
       // --pod: auto-fetch logs + describe, no piping needed
       if (opts.pod) {
-        const ns = opts.namespace ? `-n ${opts.namespace}` : '';
+        const ns = opts.namespace ? `-n "${opts.namespace}"` : '';
         if (!opts.json) console.log(chalk.dim(`  Fetching logs + describe for pod: ${chalk.white(opts.pod)}\n`));
         const [logsR, descR] = await Promise.all([
           run(`kubectl logs "${opts.pod}" ${ns} --previous 2>/dev/null || kubectl logs "${opts.pod}" ${ns} 2>/dev/null`),
@@ -215,7 +215,7 @@ Examples:
       if (!await checkDeps('kubectl')) { process.exit(1); }
       if (!opts.json) printBanner('Kubernetes events triage');
 
-      const ns       = opts.namespace ? `-n ${opts.namespace}` : '--all-namespaces';
+      const ns       = opts.namespace ? `-n "${opts.namespace}"` : '--all-namespaces';
       const nsLabel  = opts.namespace ?? 'all namespaces';
       const topN     = Math.max(1, Number.parseInt(opts.top, 10) || 50);
       const since    = opts.since ?? '1h';

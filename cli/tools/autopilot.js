@@ -74,7 +74,7 @@ async function getUnhealthyPods(ns) {
 }
 
 async function applyFix(action, pod, dryRun) {
-  const ns = pod.namespace ? `-n ${pod.namespace}` : '';
+  const ns = pod.namespace ? `-n "${pod.namespace}"` : '';
 
   if (action === 'restart-pod') {
     const cmd = `kubectl delete pod ${pod.name} ${ns} --grace-period=0`;
@@ -127,7 +127,7 @@ Examples:
   $ nxs autopilot --once --ai`)
     .action(async (opts) => {
       if (!await checkDeps('kubectl')) { process.exit(1); }
-      const ns        = opts.namespace ? `-n ${opts.namespace}` : '--all-namespaces';
+      const ns        = opts.namespace ? `-n "${opts.namespace}"` : '--all-namespaces';
       const nsLabel   = opts.namespace ?? 'all namespaces';
       const interval  = (Number.parseInt(opts.interval ?? '30', 10) || 30) * 1000;
       const seen      = new Set(); // track already-fixed pods this session
@@ -176,7 +176,7 @@ Examples:
 
           // ── AI triage ──
           if (opts.ai && !seen.has(key)) {
-            const logsR = await run(`kubectl logs ${pod.name} -n ${pod.namespace} --tail=30 --previous 2>/dev/null || kubectl logs ${pod.name} -n ${pod.namespace} --tail=30 2>/dev/null`);
+            const logsR = await run(`kubectl logs "${pod.name}" -n "${pod.namespace}" --tail=30 --previous 2>/dev/null || kubectl logs "${pod.name}" -n "${pod.namespace}" --tail=30 2>/dev/null`);
             if (logsR.stdout?.trim()) {
               try {
                 const aiResult = await analyze(
