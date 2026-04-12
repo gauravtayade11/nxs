@@ -19,12 +19,9 @@ import { registerWatch }   from './tools/watch.js';
 import { registerServe }   from './tools/serve.js';
 import { registerRbac }    from './tools/rbac.js';
 import { registerStatus, registerK8sStatus, registerDevopsPipelines } from './tools/status.js';
-import { registerNoise }     from './tools/noise.js';
-import { registerBlame }     from './tools/blame.js';
 import { registerPredict }   from './tools/predict.js';
 import { registerIncident }  from './tools/incident.js';
 import { registerAutopilot } from './tools/autopilot.js';
-import { registerTrace }     from './tools/trace.js';
 
 // Load .env then persisted config (quiet: true suppresses dotenv v17 promo output)
 config({ path: resolve(process.cwd(), '.env'), quiet: true });
@@ -53,12 +50,9 @@ registerWatch(program);
 registerServe(program);
 registerRbac(program);
 registerStatus(program);
-registerNoise(program);
-registerBlame(program);
 registerPredict(program);
 registerIncident(program);
 registerAutopilot(program);
-registerTrace(program);
 
 // Wire status sub-commands into existing tools
 const k8sCmd     = program.commands.find((c) => c.name() === 'k8s');
@@ -74,201 +68,243 @@ program
   .action(() => {
     printBanner();
 
-    // ── What is it ──
-    console.log(hr());
-    console.log(chalk.bold('\n  What is nxs?\n'));
-    console.log(chalk.hex('#94a3b8')('  AI-powered DevOps & Cloud debugger.\n'));
-    console.log(chalk.hex('#94a3b8')('  Paste any error log — Kubernetes, Docker, CI/CD, AWS, GCP, Azure,'));
-    console.log(chalk.hex('#94a3b8')('  Terraform — and instantly get root cause + fix commands.\n'));
-    console.log(chalk.hex('#94a3b8')('  Pipe any log, get AI root cause + fix. Notify Slack. Integrate with\n  Prometheus Alertmanager. Run as a REST API for your team.\n'));
+    const div  = chalk.dim('─'.repeat(60));
+    const head = (t) => console.log(`\n  ${chalk.bold.white(t)}\n`);
+    const tag  = (t, color) => color(` ${t} `);
 
-    // ── Tools ──
-    console.log(hr());
-    console.log(chalk.bold('\n  Tools:\n'));
+    // ── What it does ──────────────────────────────────────────────────────────
+    console.log(div);
+    console.log(`
+  ${chalk.white('Paste any DevOps error — get root cause + fix command in seconds.')}
 
-    const tools = [
-      {
-        name: 'nxs devops', color: chalk.yellow,
-        tagline: 'CI/CD · Docker · Terraform',
-        features: [
-          ['analyze <file/--stdin>',  'Root cause + fix for pipeline, Docker, Terraform errors'],
-          ['pipelines',               'GitHub Actions run status (active, recent, failed)'],
-          ['examples',                'Sample error logs to test with'],
-        ],
-      },
-      {
-        name: 'nxs cloud', color: chalk.hex('#FF9900'),
-        tagline: 'AWS · GCP · Azure',
-        features: [
-          ['diagnose <file/--stdin>', 'Diagnose IAM, RBAC, permission, and config errors'],
-          ['providers',               'List supported services per cloud provider'],
-        ],
-      },
+  ${chalk.dim('Engine:')}  Rule engine (instant) → AI fallback (Groq / Claude)
+  ${chalk.dim('Output:')}  Summary · Confidence score · Impact · Root cause · Fix · Suggestions
+  ${chalk.dim('Extras:')}  Slack alerts · REST API · CI/CD integration · Pattern history
+`);
+
+    // ── AI provider status ────────────────────────────────────────────────────
+    const p = providerInfo();
+    console.log(`  ${chalk.dim('Active provider:')}  ${p.badge(p.label)}  ${chalk.dim(p.name)}`);
+    console.log(chalk.dim('  No key? Demo mode works — rule engine covers the top 20 errors offline.\n'));
+    console.log(div);
+
+    // ── Core tools ────────────────────────────────────────────────────────────
+    head('🔧  Core Debugging');
+
+    const coreTools = [
       {
         name: 'nxs k8s', color: chalk.blue,
-        tagline: 'Kubernetes',
-        features: [
-          ['debug <file/--stdin>',    'Debug pod logs, events, describe output'],
-          ['status [-n namespace]',   'Nodes · pods · deployments at a glance'],
-          ['pods [--watch]',          'Pod counts by status, unhealthy highlighted, live refresh'],
-          ['errors',                  'Quick reference card for all K8s error types'],
-        ],
-      },
-      {
-        name: 'nxs sec', color: chalk.hex('#ff4757'),
-        tagline: 'Security scans — Trivy · Grype · Snyk · OWASP',
-        features: [
-          ['scan <file/--stdin>',      'Analyze Trivy, Grype, Snyk, OWASP scan output'],
-          ['scan --image <name>',      'Scan a Docker image directly (requires trivy)'],
-          ['scan --pod <name>',        'Auto-detect pod image and scan it'],
-          ['cluster [-n <namespace>]', 'Scan ALL images running in the cluster'],
-          ['severities',              'CVE severity reference card'],
-        ],
-      },
-      {
-        name: 'nxs net', color: chalk.hex('#00b4d8'),
-        tagline: 'DNS · TLS · timeouts · HTTP failures',
-        features: [
-          ['diagnose <file/--stdin>', 'Analyze any network error or connectivity failure'],
-          ['diagnose --check <host>', 'Live check: ping + DNS + TCP in one command'],
-          ['diagnose --cert <host>',  'Check TLS certificate expiry'],
-          ['errors',                  'Common network error reference card'],
-        ],
-      },
-      {
-        name: 'nxs db', color: chalk.hex('#f4a261'),
-        tagline: 'PostgreSQL · MySQL · MongoDB · Redis',
-        features: [
-          ['diagnose <file/--stdin>',              'Analyze database errors and connection failures'],
-          ['connections --pod <name> [-n <ns>]',   'Live connection monitor — auto-kill idle on threshold'],
-          ['connections --pod <name> --watch',     'Keep watching, auto-kill every N seconds'],
-          ['errors',                               'Common DB error reference card'],
+        tag: 'Kubernetes', badge: chalk.bgBlue.white,
+        cmds: [
+          ['debug --pod <name> -n <ns>',    'Auto-fetch logs + describe, no piping needed'],
+          ['debug --stdin / <file>',        'Analyze any pod log, event, or describe output'],
+          ['events [-n ns] [--warnings-only]', 'Cluster-wide event triage with grouping'],
+          ['status / pods [--watch]',       'Live pod health dashboard'],
+          ['errors',                        'Reference card: CrashLoopBackOff, OOMKilled, etc.'],
         ],
       },
       {
         name: 'nxs ci', color: chalk.hex('#f9ca24'),
-        tagline: 'GitHub Actions · GitLab CI · Jenkins · CircleCI',
-        features: [
-          ['analyze <file/--stdin>',   'Root cause + fix for any CI/CD pipeline failure'],
-          ['analyze --run <id>',       'Auto-fetch a GitHub Actions run log via gh CLI'],
-          ['analyze --notify slack',   'Post result to Slack after analysis'],
+        tag: 'CI/CD', badge: chalk.bgHex('#f9ca24').black,
+        cmds: [
+          ['analyze --latest',              'Auto-fetch most recent failed GitHub Actions run'],
+          ['analyze --run <id>',            'Fetch a specific run via gh CLI'],
+          ['analyze <file/--stdin>',        'Analyze GitHub Actions, GitLab CI, Jenkins, CircleCI'],
+          ['analyze --fail-on critical',    'Gate your pipeline — exit 1 on critical severity'],
         ],
       },
       {
-        name: 'nxs explain', color: chalk.hex('#a29bfe'),
-        tagline: 'Plain-English explainer for any DevOps term',
-        features: [
-          ['CrashLoopBackOff',         'Explain any Kubernetes error state'],
-          ['"CVE-2024-1234"',          'Explain a CVE — CVSS, affected pkg, fix version'],
-          ['ETIMEDOUT / ECONNREFUSED', 'Explain any network error code'],
-          ['"connection pool exhausted"', 'Explain any phrase or concept'],
-        ],
-      },
-      {
-        name: 'nxs watch', color: chalk.hex('#fd79a8'),
-        tagline: 'Live log watcher — auto-analyze errors as they appear',
-        features: [
-          ['<logfile>',                'Tail a file and analyze errors automatically'],
-          ['"kubectl logs -f <pod>"',  'Stream any command output and watch for errors'],
-          ['<source> --notify slack',  'Alert Slack on every detected error'],
-          ['<source> --cooldown 60',   'Control how often analyses fire (default 30s)'],
-        ],
-      },
-      {
-        name: 'nxs rbac', color: chalk.hex('#e17055'),
-        tagline: 'Kubernetes RBAC scanner',
-        features: [
-          ['scan',                     'Scan cluster for RBAC misconfigs — cluster-admin, wildcards, anonymous'],
-          ['scan -n <namespace>',      'Scan specific namespace'],
-          ['scan --fail-on critical',  'Exit 1 if critical findings (use in CI)'],
-        ],
-      },
-      {
-        name: 'nxs serve', color: chalk.hex('#00cec9'),
-        tagline: 'REST API server — team & Alertmanager integration',
-        features: [
-          ['--port 4000',              'Start API server  POST /analyze  GET /history  GET /report'],
-          ['',                         'POST /webhook/alertmanager — Prometheus → AI → Slack'],
-          ['',                         'POST /webhook/github       — CI failure → AI → Slack'],
-        ],
-      },
-      {
-        name: 'nxs status', color: chalk.cyan,
-        tagline: 'Live dashboard',
-        features: [
-          ['',                        'Full view: cluster + pipelines + helm releases'],
-          ['--only k8s',              'Cluster only'],
-          ['--only pipelines',        'GitHub Actions only'],
-          ['--only helm',             'Helm releases only'],
+        name: 'nxs devops', color: chalk.yellow,
+        tag: 'Docker · Terraform', badge: chalk.bgYellow.black,
+        cmds: [
+          ['analyze <file/--stdin>',        'Docker builds, Terraform, general pipeline errors'],
+          ['pipelines [--watch]',           'GitHub Actions run status — live refresh'],
         ],
       },
     ];
 
-    tools.forEach(({ name, color, tagline, features }) => {
-      console.log(`  ${color.bold(name)}  ${chalk.dim(tagline)}\n`);
-      features.forEach(([cmd, desc]) => {
-        console.log(
-          `    ${chalk.dim('›')} ${chalk.cyan((name + (cmd ? ' ' + cmd : '')).padEnd(38))} ${chalk.hex('#64748b')(desc)}`
-        );
+    coreTools.forEach(({ name, color, tag: t, badge, cmds }) => {
+      console.log(`  ${color.bold(name)}  ${chalk.dim(t)}`);
+      cmds.forEach(([cmd, desc]) => {
+        console.log(`    ${chalk.dim('›')} ${chalk.cyan((name + ' ' + cmd).padEnd(42))} ${chalk.hex('#64748b')(desc)}`);
       });
       console.log('');
     });
 
-    // ── Real-world one-liners ──
-    console.log(hr());
-    console.log(chalk.bold('\n  Real-world one-liners:\n'));
+    // ── Security & Reliability ────────────────────────────────────────────────
+    console.log(div);
+    head('🔐  Security & Reliability');
+
+    const reliabilityTools = [
+      {
+        name: 'nxs predict', color: chalk.hex('#fd79a8'),
+        cmds: [
+          ['[-n ns] [--threshold 80]',      'Detect at-risk pods before they crash'],
+          ['--watch [--interval 2]',        'Continuous monitor — alerts on new risks'],
+          ['--ai',                          'AI deep-dive failure timeline'],
+        ],
+      },
+      {
+        name: 'nxs autopilot', color: chalk.hex('#00b894'),
+        cmds: [
+          ['-n <ns> [--auto]',              'Self-heal crashed pods, bump OOMKilled memory'],
+          ['--dry-run',                     'Preview what would be fixed without applying'],
+        ],
+      },
+      {
+        name: 'nxs sec', color: chalk.hex('#ff4757'),
+        cmds: [
+          ['scan --image <name>',           'Scan a Docker image for CVEs (requires trivy)'],
+          ['cluster [-n ns] [--detailed]',  'Scan all running images in the cluster'],
+          ['scan <file/--stdin>',           'Analyze Trivy, Grype, Snyk, OWASP output'],
+        ],
+      },
+      {
+        name: 'nxs rbac', color: chalk.hex('#e17055'),
+        cmds: [
+          ['scan [--fail-on critical]',     'Audit cluster RBAC — wildcards, anonymous, cluster-admin'],
+        ],
+      },
+    ];
+
+    reliabilityTools.forEach(({ name, color, cmds }) => {
+      console.log(`  ${color.bold(name)}`);
+      cmds.forEach(([cmd, desc]) => {
+        console.log(`    ${chalk.dim('›')} ${chalk.cyan((name + ' ' + cmd).padEnd(42))} ${chalk.hex('#64748b')(desc)}`);
+      });
+      console.log('');
+    });
+
+    // ── Monitoring & Incidents ────────────────────────────────────────────────
+    console.log(div);
+    head('📡  Monitoring & Incidents');
+
+    const monTools = [
+      {
+        name: 'nxs watch', color: chalk.hex('#a29bfe'),
+        cmds: [
+          ['"kubectl logs -f <pod>"',       'Stream any command — AI on every error line'],
+          ['<logfile> --severity critical', 'Only trigger AI on FATAL/OOM/panic events'],
+          ['<source> --notify slack',       'Post Slack alert on every detected error'],
+        ],
+      },
+      {
+        name: 'nxs incident', color: chalk.hex('#e17055'),
+        cmds: [
+          ['start --title "..." --severity critical', 'Open incident + auto-post to Slack'],
+          ['update <id> --note "..."',      'Add timeline update (threads in Slack)'],
+          ['close <id> --resolution "..."', 'Resolve + post resolution to Slack'],
+          ['postmortem <id> [--output md]', 'AI-generated postmortem with prevention items'],
+        ],
+      },
+      {
+        name: 'nxs status', color: chalk.cyan,
+        cmds: [
+          ['[--only k8s|pipelines|helm]',   'Live dashboard — cluster + CI + Helm releases'],
+        ],
+      },
+    ];
+
+    monTools.forEach(({ name, color, cmds }) => {
+      console.log(`  ${color.bold(name)}`);
+      cmds.forEach(([cmd, desc]) => {
+        console.log(`    ${chalk.dim('›')} ${chalk.cyan((name + ' ' + cmd).padEnd(42))} ${chalk.hex('#64748b')(desc)}`);
+      });
+      console.log('');
+    });
+
+    // ── Infrastructure ────────────────────────────────────────────────────────
+    console.log(div);
+    head('🌐  Infrastructure');
+
+    const infraTools = [
+      { name: 'nxs cloud',   color: chalk.hex('#FF9900'), desc: 'AWS · GCP · Azure IAM and API errors' },
+      { name: 'nxs net',     color: chalk.hex('#00b4d8'), desc: 'DNS · TLS · timeouts · HTTP failures  (--check <host>  --cert <host>)' },
+      { name: 'nxs db',      color: chalk.hex('#f4a261'), desc: 'PostgreSQL · MySQL · MongoDB · Redis errors' },
+      { name: 'nxs explain', color: chalk.hex('#a29bfe'), desc: 'Plain-English explainer for any error, CVE, or DevOps term' },
+    ];
+
+    infraTools.forEach(({ name, color, desc }) => {
+      console.log(`  ${color.bold(name.padEnd(14))} ${chalk.hex('#64748b')(desc)}`);
+    });
+    console.log('');
+
+    // ── Integrations ─────────────────────────────────────────────────────────
+    console.log(div);
+    head('🔗  Integrations');
+
+    console.log(`  ${chalk.hex('#00cec9').bold('nxs serve --port 4000')}  ${chalk.dim('REST API for team + CI/CD')}`);
+    const endpoints = [
+      ['POST /analyze',              'Any log → structured analysis JSON'],
+      ['POST /webhook/alertmanager', 'Prometheus alert → AI diagnosis → Slack'],
+      ['POST /webhook/github',       'CI failure → AI diagnosis → Slack'],
+      ['GET  /history / /report',    'Past analyses + digest'],
+    ];
+    endpoints.forEach(([ep, desc]) => {
+      console.log(`    ${chalk.dim('›')} ${chalk.cyan(ep.padEnd(32))} ${chalk.hex('#64748b')(desc)}`);
+    });
+    console.log('');
+
+    // ── Quick-start one-liners ────────────────────────────────────────────────
+    console.log(div);
+    head('⚡  Quick-start one-liners');
 
     const examples = [
-      ['Debug a crashing pod',          'kubectl logs my-pod --previous | nxs k8s debug --stdin'],
-      ['Debug + notify Slack',          'kubectl logs my-pod --previous | nxs k8s debug --stdin --notify slack'],
-      ['Docker build failure',          'docker build . 2>&1 | nxs devops analyze --stdin'],
-      ['Terraform apply error',         'terraform apply 2>&1 | nxs devops analyze --stdin'],
-      ['GitHub Actions failure',        'nxs ci analyze --run 12345'],
-      ['Scan cluster images for CVEs',  'nxs sec cluster -n production --detailed'],
-      ['RBAC audit',                    'nxs rbac scan --fail-on critical'],
-      ['Watch pod logs live',           'nxs watch "kubectl logs -f my-pod" --notify slack'],
-      ['Explain any error',             'nxs explain OOMKilled'],
+      ['Debug crashing pod',            'kubectl logs my-pod --previous | nxs k8s debug --stdin'],
+      ['Instant diagnosis (no API key)','kubectl logs my-pod --previous | nxs k8s debug --stdin --fast'],
+      ['Debug + Slack alert',           'kubectl logs my-pod --previous | nxs k8s debug --stdin --notify slack'],
+      ['Latest CI failure',             'nxs ci analyze --latest'],
+      ['Gate CI on severity',           'nxs ci analyze build.log --fail-on critical --no-chat'],
+      ['Predict pod failures',          'nxs predict -n production --watch'],
+      ['Scan cluster for CVEs',         'nxs sec cluster -n production --detailed'],
+      ['Watch live pod logs',           'nxs watch "kubectl logs -f deploy/my-app" --severity critical'],
+      ['Open an incident',              'nxs incident start --title "API down" --severity critical'],
+      ['Test offline (no cluster)',     'nxs test crashloop'],
       ['Full infra snapshot',           'nxs status'],
-      ['Start team API server',         'NXS_API_KEY=secret nxs serve --port 4000'],
-      ['Weekly digest',                 'nxs report --days 7'],
+      ['Weekly digest → Slack',         'nxs report --days 7 --notify slack'],
     ];
 
     examples.forEach(([label, cmd]) => {
-      console.log(`  ${chalk.dim('›')} ${chalk.hex('#64748b')(label.padEnd(30))} ${chalk.cyan(cmd)}`);
+      console.log(`  ${chalk.dim('›')} ${chalk.hex('#64748b')(label.padEnd(32))} ${chalk.cyan(cmd)}`);
     });
 
-    // ── Global commands ──
-    console.log('\n' + hr());
-    console.log(chalk.bold('\n  Global commands:\n'));
+    // ── Global commands ───────────────────────────────────────────────────────
+    console.log('\n' + div);
+    head('🛠   Global Commands');
 
-    const global_cmds = [
-      ['nxs history',              'All past analyses across all tools'],
-      ['nxs history --search oom', 'Search history by keyword'],
-      ['nxs report --days 7',      'Weekly digest of all analyses'],
-      ['nxs config --setup',       'Interactive API key wizard'],
-      ['nxs config --set KEY=val', 'Set a key directly'],
-      ['nxs update',               'Check for latest version'],
-      ['nxs info',                 'This screen'],
+    const globals = [
+      ['nxs test --list',           'List all 10 built-in test scenarios (offline, no cluster needed)'],
+      ['nxs test <scenario>',       'Run a scenario through the full pipeline — great for demos'],
+      ['nxs history',               'All past analyses across every tool'],
+      ['nxs history --search oom',  'Search history by keyword'],
+      ['nxs report --days 7',       'Weekly digest with severity breakdown by tool'],
+      ['nxs config --setup',        'Interactive wizard — add Groq or Claude API key'],
+      ['nxs update',                'Check for latest version on npm'],
     ];
 
-    global_cmds.forEach(([cmd, desc]) => {
+    globals.forEach(([cmd, desc]) => {
       console.log(`  ${chalk.cyan(cmd.padEnd(32))} ${chalk.dim(desc)}`);
     });
 
-    // ── AI providers ──
-    console.log('\n' + hr());
-    console.log(chalk.bold('\n  AI providers:\n'));
+    // ── Universal flags ───────────────────────────────────────────────────────
+    console.log('\n' + div);
+    head('🚩  Universal Flags  (work on every analyze/debug/diagnose command)');
 
-    const p = providerInfo();
-    console.log(`  Active now:  ${p.badge(p.label)}  ${p.name}\n`);
+    const flags = [
+      ['--fast',               'Rules engine only — instant, zero API calls, works offline'],
+      ['--notify slack',       'Post result to Slack after analysis'],
+      ['--fail-on critical',   'Exit code 1 if severity matches (use in CI/CD gates)'],
+      ['-o, --output <file>',  'Save full analysis as a markdown report'],
+      ['--redact',             'Scrub secrets/tokens before sending to AI'],
+      ['-j, --json',           'Structured JSON output for scripting'],
+      ['--no-chat',            'Skip the follow-up Q&A loop'],
+    ];
 
-    console.log(chalk.dim('  GROQ_API_KEY        Free — console.groq.com'));
-    console.log(chalk.dim('  ANTHROPIC_API_KEY   $5 free credits — console.anthropic.com'));
-    console.log(chalk.dim('  (no key = demo mode, keyword-based mock responses)\n'));
+    flags.forEach(([flag, desc]) => {
+      console.log(`  ${chalk.yellow(flag.padEnd(24))} ${chalk.dim(desc)}`);
+    });
 
-    console.log(chalk.dim(`  Run:  nxs config --setup   to add a key\n`));
-
-    console.log(hr() + '\n');
+    console.log('\n' + div + '\n');
   });
 
 // ── nxs test ─────────────────────────────────────────────────────────────────
@@ -849,28 +885,10 @@ if (process.argv.slice(2).length === 0) {
       cmds: ['-n <namespace>', '--threshold 80', '--ai'],
     },
     {
-      name: 'blame',
-      color: chalk.hex('#fdcb6e'),
-      desc: 'Correlate what changed before a breakage',
-      cmds: ['--since 1h', '--since 30m -n production', '--no-ai'],
-    },
-    {
-      name: 'noise',
-      color: chalk.hex('#636e72'),
-      desc: 'Identify noisy alerts and reduce alert fatigue',
-      cmds: ['', '--alertmanager http://localhost:9093', '--days 30 --ai'],
-    },
-    {
       name: 'incident',
       color: chalk.hex('#e17055'),
       desc: 'Full incident commander — start, track, postmortem',
       cmds: ['start --title "..." --severity critical', 'update <id> --note "..."', 'close <id> --resolution "..."', 'postmortem <id>'],
-    },
-    {
-      name: 'trace',
-      color: chalk.hex('#74b9ff'),
-      desc: 'Trace HTTP requests — timing, pod logs, Jaeger waterfall',
-      cmds: ['<url>', '<url> --jaeger http://localhost:16686', '--jaeger <url> --live', '--live --ai --slow-ms 100'],
     },
   ];
 
