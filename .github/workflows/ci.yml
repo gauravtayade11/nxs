@@ -3,6 +3,8 @@ name: nxs CI
 on:
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
   workflow_dispatch:
 
 jobs:
@@ -73,3 +75,41 @@ jobs:
           node-version: '20'
       - run: npm install
       - run: npm audit --audit-level=high || true
+
+  # ── Add this block to any pipeline ──────────────────────────────────────────
+  # When adding new jobs: just add them to `needs` below — that's it
+  # ─────────────────────────────────────────────────────────────────────────────
+  nxs-notify:
+    name: nxs — Analyze & Notify
+    runs-on: ubuntu-latest
+    needs: [lint, test, smoke, security]
+    if: failure()
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm install
+
+      - name: Fetch failed job logs and analyze
+        run: |
+          {
+            echo "Pipeline: ${{ github.workflow }}"
+            echo "Branch:   ${{ github.ref_name }}"
+            echo "Commit:   ${{ github.sha }}"
+            echo "Actor:    ${{ github.actor }}"
+            echo "Run URL:  ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo "---"
+            # Jobs are already complete by the time this runs — fetch their logs directly
+            gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs" \
+              --jq '.jobs[] | select(.conclusion == "failure") | .id' | \
+            while read -r job_id; do
+              gh api "repos/${{ github.repository }}/actions/jobs/${job_id}/logs" 2>/dev/null || true
+            done
+          } | node cli/index.js ci analyze --stdin --notify slack --no-chat || true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
