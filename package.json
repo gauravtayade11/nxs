@@ -51,7 +51,9 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "cli": "node cli/index.js"
+    "cli": "node cli/index.js",
+    "check-version": "node scripts/check-version.js",
+    "prepublishOnly": "node scripts/check-version.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.82.0",
