@@ -286,6 +286,7 @@ export function registerSec(program) {
     .option('-n, --namespace <ns>', 'Namespace for --pod (default: default)')
     .option('--image <image>', 'Scan a Docker image directly with trivy (if installed)')
     .option('-j, --json', 'Output as JSON')
+    .option('--fast', 'Rules engine only — no AI call (instant, offline)')
     .option('--no-chat', 'Skip follow-up chat')
     .option('--redact', 'Scrub secrets before sending to AI')
     .option('-o, --output <file>', 'Save analysis to a markdown file')

@@ -102,6 +102,7 @@ export function registerNet(program) {
     .option('--port <port>', 'Port for --check (default: 443)')
     .option('--cert <host>', 'Check TLS certificate expiry for a host')
     .option('-j, --json', 'Output as JSON')
+    .option('--fast', 'Rules engine only — no AI call (instant, offline)')
     .option('--no-chat', 'Skip follow-up chat')
     .option('--redact', 'Scrub secrets before sending to AI')
     .option('-o, --output <file>', 'Save analysis to a markdown file')

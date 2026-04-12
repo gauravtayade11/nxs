@@ -118,6 +118,7 @@ export function registerDb(program) {
     .option('-s, --stdin', 'Read from stdin')
     .option('-i, --interactive', 'Paste error interactively')
     .option('-j, --json', 'Output as JSON')
+    .option('--fast', 'Rules engine only — no AI call (instant, offline)')
     .option('--no-chat', 'Skip follow-up chat')
     .option('--redact', 'Scrub secrets/passwords before sending to AI')
     .option('-o, --output <file>', 'Save analysis to a markdown file')
