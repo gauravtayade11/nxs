@@ -63,65 +63,51 @@ jobs:
       - name: nxs rbac scan --json (no cluster — should exit gracefully)
         run: node cli/index.js rbac scan --json 2>&1 | head -5 || true
 
+      # Capture output to file so we can pipe it to nxs on failure
       - name: Run auth tests
+        id: auth-tests
+        continue-on-error: true
         run: |
-          echo "PASS src/api/health.test.js (12ms)"
-          echo "PASS src/api/users.test.js (18ms)"
-          echo "FAIL src/services/auth.test.js"
-          echo ""
-          echo "  ● AuthService › login › should return 200 with valid credentials"
-          echo ""
-          echo "    expect(received).toBe(expected)"
-          echo "    Expected: 200"
-          echo "    Received: 401"
-          echo ""
-          echo "    Reason: TEST_JWT_SECRET environment variable is not set"
-          echo "    The JWT verification failed because no secret was provided."
-          echo ""
-          echo "      at Object.<anonymous> (src/services/auth.test.js:34:5)"
-          echo ""
-          echo "Test Suites: 1 failed, 2 passed, 3 total"
-          echo "Tests:       1 failed, 47 passed, 48 total"
-          exit 1
+          {
+            echo "Workflow: ${{ github.workflow }}"
+            echo "Branch:   ${{ github.ref_name }}"
+            echo "Run URL:  ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo "---"
+            echo "PASS src/api/health.test.js (12ms)"
+            echo "PASS src/api/users.test.js (18ms)"
+            echo "FAIL src/services/auth.test.js"
+            echo ""
+            echo "  ● AuthService › login › should return 200 with valid credentials"
+            echo ""
+            echo "    expect(received).toBe(expected)"
+            echo "    Expected: 200"
+            echo "    Received: 401"
+            echo ""
+            echo "    Reason: TEST_JWT_SECRET environment variable is not set"
+            echo "    The JWT verification failed because no secret was provided."
+            echo ""
+            echo "      at Object.<anonymous> (src/services/auth.test.js:34:5)"
+            echo ""
+            echo "Test Suites: 1 failed, 2 passed, 3 total"
+            echo "Tests:       1 failed, 47 passed, 48 total"
+            exit 1
+          } 2>&1 | tee /tmp/test-output.log
         env:
           NODE_ENV: test
 
-  notify-failure:
-    name: Notify Failure (Slack)
-    runs-on: ubuntu-latest
-    needs: [lint, smoke-test]
-    if: failure()
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm install
-
+      # Only runs when auth-tests failed — uses the captured log directly
       - name: Analyze failure and notify Slack
-        run: |
-          {
-            echo "GitHub Actions pipeline failed"
-            echo "Workflow: ${{ github.workflow }}"
-            echo "Branch:   ${{ github.ref_name }}"
-            echo "Commit:   ${{ github.sha }}"
-            echo "Actor:    ${{ github.actor }}"
-            echo "Run URL:  ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-            echo "Lint:     ${{ needs.lint.result }}"
-            echo "Smoke:    ${{ needs.smoke-test.result }}"
-            echo "---"
-            gh run view ${{ github.run_id }} --log-failed 2>&1 || true
-          } | node cli/index.js ci analyze --stdin --notify slack --no-chat || true
+        if: steps.auth-tests.outcome == 'failure'
+        run: cat /tmp/test-output.log | node cli/index.js ci analyze --stdin --notify slack --no-chat || true
         env:
-          GH_TOKEN: ${{ github.token }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      # Re-fail the job after notification
+      - name: Fail if tests failed
+        if: steps.auth-tests.outcome == 'failure'
+        run: exit 1
 
   security:
     name: Security Audit
