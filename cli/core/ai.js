@@ -7,7 +7,6 @@ const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const GROQ_MAX_CHARS = 8000;
 
-// Suffix appended to every tool system prompt — asks AI for the new fields
 const AI_SCHEMA_SUFFIX = `
 
 Additionally, always include these fields in your JSON response:
@@ -16,6 +15,8 @@ Additionally, always include these fields in your JSON response:
 - "suggestions": array of 2–3 strings. Proactive improvements BEYOND just fixing the immediate error — e.g. add monitoring, improve resilience, prevent recurrence.
 
 CRITICAL RULE for "commands" field: Use the EXACT resource names, namespaces, pod names, image names, and values extracted from the log. NEVER use placeholders like <pod-name>, <namespace>, <image>, or <resource>. If a value appears in the log, use it verbatim in the command.`;
+
+const ANALYZE_USER_MSG = `Analyze this log. For the "commands" field: if pod names, deployment names, or namespaces appear in the log, use those exact values. If they do NOT appear in the log, do NOT use angle-bracket placeholders like <pod-name> or <namespace> — instead write the kubectl discovery command that would find them (e.g. "kubectl get pods -A | grep <keyword>" or "kubectl get pods --all-namespaces"). Never leave a command with an unresolved placeholder.`;
 
 async function callGroq(systemPrompt, userMessage, jsonMode = true) {
   const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -53,6 +54,64 @@ async function callAnthropic(systemPrompt, messages, jsonMode = true) {
   return response.content.find((b) => b.type === 'text')?.text ?? '';
 }
 
+// ── Fallback helpers ───────────────────────────────────────────────────────
+
+function mockFallback(mockFn, logText, warning) {
+  const result = mockFn(logText);
+  if (warning) result._warning = warning;
+  result.confidence = result.confidence ?? 40;
+  result.via = 'mock';
+  return result;
+}
+
+function isFallbackError(msg, patterns) {
+  return patterns.some((p) => msg.includes(p));
+}
+
+async function tryGroq(augmentedPrompt, logText, mockFn, ruleResult, antKey) {
+  let input = logText;
+  let truncated = false;
+  if (input.length > GROQ_MAX_CHARS) { input = input.slice(-GROQ_MAX_CHARS); truncated = true; }
+
+  try {
+    const raw = await callGroq(augmentedPrompt, `${ANALYZE_USER_MSG}\n\n${input}`);
+    const result = JSON.parse(raw);
+    if (truncated) result._truncated = true;
+    result.via = 'ai-groq';
+    result.confidence = result.confidence ?? 75;
+    return { result, fallthrough: false };
+  } catch (error_) {
+    const msg = error_.message ?? '';
+    const fallback = isFallbackError(msg, [
+      'rate_limit', 'Request too large', 'quota', 'fetch failed',
+      'ENOTFOUND', 'ECONNREFUSED', 'Failed to generate JSON',
+      'json_validate_failed', 'failed_generation',
+    ]);
+    if (!fallback) throw error_;
+    if (antKey) return { result: null, fallthrough: true };
+    const warning = `Groq unavailable (${msg.slice(0, 60)}). Showing ${ruleResult ? 'rule-matched' : 'mock'} response.`;
+    if (ruleResult) { ruleResult._warning = warning; return { result: ruleResult, fallthrough: false }; }
+    return { result: mockFallback(mockFn, logText, warning), fallthrough: false };
+  }
+}
+
+async function tryAnthropic(augmentedPrompt, logText, mockFn, ruleResult) {
+  try {
+    const raw = await callAnthropic(augmentedPrompt, `${ANALYZE_USER_MSG}\n\n${logText}`);
+    const result = JSON.parse(raw);
+    result.via = 'ai-anthropic';
+    result.confidence = result.confidence ?? 75;
+    return result;
+  } catch (error_) {
+    const msg = error_.message ?? '';
+    const fallback = isFallbackError(msg, ['rate_limit', 'overloaded', 'fetch failed', 'ENOTFOUND']);
+    if (!fallback) throw error_;
+    const warning = `Anthropic unavailable (${msg.slice(0, 60)}). Showing ${ruleResult ? 'rule-matched' : 'mock'} response.`;
+    if (ruleResult) { ruleResult._warning = warning; return ruleResult; }
+    return mockFallback(mockFn, logText, warning);
+  }
+}
+
 // ── Public API ─────────────────────────────────────────────────────────────
 
 /**
@@ -63,107 +122,41 @@ async function callAnthropic(systemPrompt, messages, jsonMode = true) {
  *   2. If fast=true → return rule result (or mock if no match)
  *   3. If confidence >= 95 from rules → return rule result (skip AI)
  *   4. Otherwise → call Groq / Anthropic with augmented prompt
- *
- * @param {string}   logText
- * @param {string}   systemPrompt  - the tool module provides this
- * @param {function} mockFn        - fallback when no API key
- * @param {object}   [opts]        - { fast: bool }
  */
 export async function analyze(logText, systemPrompt, mockFn, opts = {}) {
   const groqKey = process.env.GROQ_API_KEY;
   const antKey  = process.env.ANTHROPIC_API_KEY;
 
-  // ── Rule engine (always runs first) ──────────────────────────────────────
   const ruleResult = matchRule(logText);
 
-  // --fast / performance mode: rules only, no AI
+  // --fast: rules only, no AI
   if (opts.fast) {
     if (ruleResult) return ruleResult;
-    // No rule matched — fall back to mock
-    const result = mockFn(logText);
-    result._mock = true;
-    result.confidence = result.confidence ?? 40;
-    result.via = 'mock';
-    return result;
+    const fastMock = mockFn(logText);
+    fastMock._mock = true;
+    fastMock.confidence = fastMock.confidence ?? 40;
+    fastMock.via = 'mock';
+    return fastMock;
   }
 
-  // High-confidence rule match — skip AI entirely (saves API calls)
-  if (ruleResult && ruleResult.confidence >= 95) {
-    return ruleResult;
-  }
+  // High-confidence rule match — skip AI
+  if (ruleResult && ruleResult.confidence >= 95) return ruleResult;
 
-  // Rule matched but confidence < 95 — pass as a hint to AI for better accuracy
+  // Augment prompt with rule hint if partial match
   let augmentedPrompt = systemPrompt + AI_SCHEMA_SUFFIX;
   if (ruleResult) {
     augmentedPrompt += `\n\nRule engine pre-match (confidence ${ruleResult.confidence}%): ${ruleResult.id ?? 'matched'}. Use this as a starting point but verify against the actual log.`;
   }
 
-  // ── Groq ──────────────────────────────────────────────────────────────────
   if (groqKey) {
-    let input = logText;
-    let truncated = false;
-    if (input.length > GROQ_MAX_CHARS) { input = input.slice(0, GROQ_MAX_CHARS); truncated = true; }
-    try {
-      const raw = await callGroq(augmentedPrompt, `Analyze this log. For the "commands" field: if pod names, deployment names, or namespaces appear in the log, use those exact values. If they do NOT appear in the log, do NOT use angle-bracket placeholders like <pod-name> or <namespace> — instead write the kubectl discovery command that would find them (e.g. "kubectl get pods -A | grep <keyword>" or "kubectl get pods --all-namespaces"). Never leave a command with an unresolved placeholder.\n\n${input}`);
-      const result = JSON.parse(raw);
-      if (truncated) result._truncated = true;
-      result.via = 'ai-groq';
-      if (result.confidence == null) result.confidence = 75; // AI didn't include it — default
-      return result;
-    } catch (groqErr) {
-      const msg = groqErr.message ?? '';
-      const isFallback = msg.includes('rate_limit') || msg.includes('Request too large') ||
-                         msg.includes('quota') || msg.includes('fetch failed') ||
-                         msg.includes('ENOTFOUND') || msg.includes('ECONNREFUSED') ||
-                         msg.includes('Failed to generate JSON') || msg.includes('json_validate_failed') ||
-                         msg.includes('failed_generation');
-      if (isFallback) {
-        if (!antKey) {
-          // Use rule result if available, else mock
-          if (ruleResult) { ruleResult._warning = `Groq unavailable (${msg.slice(0, 60)}). Showing rule-matched response.`; return ruleResult; }
-          const result = mockFn(logText);
-          result._warning = `Groq unavailable (${msg.slice(0, 60)}). Showing mock response.`;
-          result.confidence = result.confidence ?? 40;
-          result.via = 'mock';
-          return result;
-        }
-        // fall through to Anthropic
-      } else {
-        throw groqErr;
-      }
-    }
+    const { result, fallthrough } = await tryGroq(augmentedPrompt, logText, mockFn, ruleResult, antKey);
+    if (!fallthrough) return result;
   }
 
-  // ── Anthropic ─────────────────────────────────────────────────────────────
-  if (antKey) {
-    try {
-      const raw = await callAnthropic(augmentedPrompt, `Analyze this log. For the "commands" field: if pod names, deployment names, or namespaces appear in the log, use those exact values. If they do NOT appear in the log, do NOT use angle-bracket placeholders like <pod-name> or <namespace> — instead write the kubectl discovery command that would find them (e.g. "kubectl get pods -A | grep <keyword>" or "kubectl get pods --all-namespaces"). Never leave a command with an unresolved placeholder.\n\n${logText}`);
-      const result = JSON.parse(raw);
-      result.via = 'ai-anthropic';
-      if (result.confidence == null) result.confidence = 75;
-      return result;
-    } catch (antErr) {
-      const msg = antErr.message ?? '';
-      const isFallback = msg.includes('rate_limit') || msg.includes('overloaded') ||
-                         msg.includes('fetch failed') || msg.includes('ENOTFOUND');
-      if (isFallback) {
-        if (ruleResult) { ruleResult._warning = `Anthropic unavailable. Showing rule-matched response.`; return ruleResult; }
-        const result = mockFn(logText);
-        result._warning = `Anthropic unavailable (${msg.slice(0, 60)}). Showing mock response.`;
-        result.confidence = result.confidence ?? 40;
-        result.via = 'mock';
-        return result;
-      }
-      throw antErr;
-    }
-  }
+  if (antKey) return tryAnthropic(augmentedPrompt, logText, mockFn, ruleResult);
 
-  // ── No API keys: prefer rule result over mock ─────────────────────────────
-  if (ruleResult) {
-    ruleResult._mock = true; // triggers demo mode banner
-    return ruleResult;
-  }
-
+  // No API keys
+  if (ruleResult) { ruleResult._mock = true; return ruleResult; }
   const result = mockFn(logText);
   result._mock = true;
   result.confidence = result.confidence ?? 40;
@@ -194,13 +187,8 @@ Rules for follow-up answers:
 3. Be direct and actionable — skip preamble. Lead with the command or the answer.
 4. If asked how to fix something, give the full fix sequence: find → verify → apply → confirm.`;
 
-  if (process.env.GROQ_API_KEY) {
-    return callGroq(context, messages, false);
-  }
-
-  if (process.env.ANTHROPIC_API_KEY) {
-    return callAnthropic(context, messages, false);
-  }
+  if (process.env.GROQ_API_KEY) return callGroq(context, messages, false);
+  if (process.env.ANTHROPIC_API_KEY) return callAnthropic(context, messages, false);
 
   await delay(600);
   return 'Running in demo mode. Add GROQ_API_KEY or ANTHROPIC_API_KEY to enable real AI chat.';
