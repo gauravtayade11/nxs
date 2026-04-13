@@ -142,8 +142,8 @@ Examples:
 
         const podSections = await Promise.all(pods.map(async (pod) => {
           const [logsR, descR] = await Promise.all([
-            run(`kubectl logs ${pod} ${ns} --tail=100 --previous 2>/dev/null || kubectl logs ${pod} ${ns} --tail=100 2>/dev/null`),
-            run(`kubectl describe pod ${pod} ${ns} 2>/dev/null`),
+            run(`kubectl logs "${pod}" ${ns} --tail=100 --previous 2>/dev/null || kubectl logs "${pod}" ${ns} --tail=100 2>/dev/null`),
+            run(`kubectl describe pod "${pod}" ${ns} 2>/dev/null`),
           ]);
           return [
             `=== POD: ${pod} — LOGS ===`,
