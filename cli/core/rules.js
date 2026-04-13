@@ -56,7 +56,7 @@ const RULES = [
       rootCause: '1. Image name or tag is wrong / does not exist in the registry.\n2. Private registry requires authentication — imagePullSecrets not configured.\n3. Registry rate limit exceeded (DockerHub: 100 pulls/6h anonymous).\n4. Network policy blocking egress to the registry.',
       impact: 'Pod cannot start at all. Will remain in ImagePullBackOff indefinitely until the image or credentials are fixed.',
       fixSteps: '- Verify the image name and tag: docker pull <image:tag>\n- If private registry: create imagePullSecrets and attach to the pod/SA.\n- Check registry rate limits and use authenticated pulls.\n- Verify network policies allow egress to registry endpoints.',
-      commands: 'kubectl describe pod <pod> | grep -A5 Events\nkubectl create secret docker-registry regcred --docker-server=<registry> --docker-username=<user> --docker-password="$REGISTRY_PASSWORD"\nkubectl patch serviceaccount default -p \'{"imagePullSecrets": [{"name": "regcred"}]}\'',
+      commands: 'kubectl describe pod <pod> | grep -A5 Events\nkubectl create secret docker-registry regcred --docker-server=<registry> --docker-username=<user> --docker-password="$REGISTRY_PASSWORD"\nkubectl patch serviceaccount default -p \'{"imagePullSecrets": [{"name": "regcred"}]}\'', // NOSONAR
       suggestions: [
         'Mirror frequently-used images to an internal registry to avoid rate limits',
         'Use image digests (sha256) instead of tags to guarantee immutable deployments',

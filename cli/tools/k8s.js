@@ -37,7 +37,7 @@ const MOCK_RESPONSES = {
     summary: 'Pod failing to start due to ImagePullBackOff — cannot pull container image.',
     rootCause: '1. Image name or tag is incorrect or does not exist.\n2. Registry requires authentication (imagePullSecrets missing).\n3. Network issue preventing registry access.',
     fixSteps: '- Verify the image name and tag in the deployment manifest.\n- Check the image exists in the registry.\n- If private registry, create and attach imagePullSecrets.',
-    commands: 'kubectl describe pod <pod-name>\nkubectl get events --sort-by=\'.metadata.creationTimestamp\'\nkubectl create secret docker-registry regcred --docker-server=<server> --docker-username=<user> --docker-password="$REGISTRY_PASSWORD"',
+    commands: 'kubectl describe pod <pod-name>\nkubectl get events --sort-by=\'.metadata.creationTimestamp\'\nkubectl create secret docker-registry regcred --docker-server=<server> --docker-username=<user> --docker-password="$REGISTRY_PASSWORD"', // NOSONAR
   },
   crashloop: {
     tool: 'kubernetes', severity: 'critical', resource: 'Pod', namespace: 'default',
