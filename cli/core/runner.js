@@ -273,55 +273,62 @@ function toSlackText(v) {
   return String(v);
 }
 
+function getViaLabel(via) {
+  if (via === 'rules')        return 'rules engine';
+  if (via === 'ai-groq')      return 'Groq AI';
+  if (via === 'ai-anthropic') return 'Claude AI';
+  return 'demo';
+}
+
+function buildConfidenceText(confidence) {
+  if (confidence == null) return '';
+  const conf   = Math.round(confidence);
+  const filled = Math.round(conf / 10);
+  const bar    = `${'█'.repeat(filled)}${'░'.repeat(10 - filled)} ${conf}%`;
+  return `\n:bar_chart: *Confidence:* \`${bar}\``;
+}
+
+function buildOptionalBlocks(cmdText, suggestions, isMock) {
+  const blocks = [];
+  if (cmdText)     blocks.push({ type: 'section', text: { type: 'mrkdwn', text: `:terminal: *Commands*\n${cmdText.slice(0, 400)}` } });
+  if (suggestions) blocks.push({ type: 'section', text: { type: 'mrkdwn', text: `:rocket: *Suggestions*\n${suggestions}` } });
+  if (isMock)      blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: '⚠ Demo mode — add GROQ_API_KEY for real AI diagnosis' }] });
+  return blocks;
+}
+
 async function notifySlack(result, toolModule, webhookUrl) {
-  const sev = result.severity ?? 'unknown';
+  const sev      = result.severity ?? 'unknown';
   const sevEmoji = { critical: '🔴', warning: '🟡', info: '🟢' }[sev] ?? '⚪';
   const sevColor = { critical: '#e74c3c', warning: '#f39c12', info: '#2ecc71' }[sev] ?? '#95a5a6';
 
-  const pipeline = result.pipeline ? `  |  Pipeline: *${result.pipeline}*` : '';
-  const step     = result.step     ? `  |  Step: *${result.step}*`         : '';
+  const pipeline  = result.pipeline ? `  |  Pipeline: *${result.pipeline}*` : '';
+  const step      = result.step     ? `  |  Step: *${result.step}*`         : '';
+  const confText  = buildConfidenceText(result.confidence);
+  const via       = getViaLabel(result.via);
 
-  // Confidence bar for Slack
-  const conf     = result.confidence != null ? Math.round(result.confidence) : null;
-  const confBar  = conf != null ? `${'█'.repeat(Math.round(conf / 10))}${'░'.repeat(10 - Math.round(conf / 10))} ${conf}%` : '';
-  const confText = conf != null ? `\n:bar_chart: *Confidence:* \`${confBar}\`` : '';
-
-  const via      = result.via === 'rules' ? 'rules engine' : result.via === 'ai-groq' ? 'Groq AI' : result.via === 'ai-anthropic' ? 'Claude AI' : 'demo';
-
-  const fixText = toSlackBullets(result.fixSteps ?? result.commands);
-  const cmdText = result.commands && result.commands !== result.fixSteps
+  const fixText   = toSlackBullets(result.fixSteps ?? result.commands);
+  const cmdText   = result.commands && result.commands !== result.fixSteps
     ? toSlackText(result.commands).split('\n').map(l => `\`${l.trim()}\``).filter(Boolean).join('\n')
     : null;
 
-  // Impact section
-  const impactText = result.impact
-    ? `\n\n:zap: *Impact*\n${toSlackText(result.impact).slice(0, 400)}`
-    : '';
-
-  // Suggestions section
-  const suggestions = result.suggestions?.length > 0
-    ? toSlackBullets(result.suggestions).slice(0, 400)
-    : null;
+  const impactText   = result.impact ? `\n\n:zap: *Impact*\n${toSlackText(result.impact).slice(0, 400)}` : '';
+  const suggestions  = result.suggestions?.length > 0 ? toSlackBullets(result.suggestions).slice(0, 400) : null;
 
   const blocks = [
-    { type: 'header', text: { type: 'plain_text', text: `${sevEmoji} ${(result.tool ?? toolModule ?? 'nxs').toUpperCase()} — ${sev.toUpperCase()}` } },
+    { type: 'header',  text: { type: 'plain_text', text: `${sevEmoji} ${(result.tool ?? toolModule ?? 'nxs').toUpperCase()} — ${sev.toUpperCase()}` } },
     { type: 'section', text: { type: 'mrkdwn', text: `*${toSlackText(result.summary).slice(0, 300)}*${pipeline}${step}${confText}` } },
     { type: 'divider' },
     { type: 'section', text: { type: 'mrkdwn', text: `:mag: *Root cause*\n${toSlackText(result.rootCause).slice(0, 500)}${impactText}` } },
     { type: 'divider' },
     { type: 'section', text: { type: 'mrkdwn', text: `:wrench: *How to fix*\n${fixText.slice(0, 600)}` } },
-    ...(cmdText ? [{ type: 'section', text: { type: 'mrkdwn', text: `:terminal: *Commands*\n${cmdText.slice(0, 400)}` } }] : []),
-    ...(suggestions ? [{ type: 'section', text: { type: 'mrkdwn', text: `:rocket: *Suggestions*\n${suggestions}` } }] : []),
-    ...(result._mock ? [{ type: 'context', elements: [{ type: 'mrkdwn', text: `⚠ Demo mode — add GROQ_API_KEY for real AI diagnosis` }] }] : []),
+    ...buildOptionalBlocks(cmdText, suggestions, result._mock),
     { type: 'context', elements: [{ type: 'mrkdwn', text: `nxs · ${via} · ${new Date().toISOString()}` }] },
   ];
-
-  const body = { attachments: [{ color: sevColor, blocks }] };
 
   const resp = await fetch(webhookUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ attachments: [{ color: sevColor, blocks }] }),
   });
   const text = await resp.text();
   if (!resp.ok) throw new Error(`Slack error ${resp.status}: ${text.slice(0, 120)}`);
