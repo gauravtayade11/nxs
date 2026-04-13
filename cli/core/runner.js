@@ -12,6 +12,43 @@ import { addHistory, getPatternFrequency } from './config.js';
 import { printResult, readStdin, prompt } from './ui.js';
 import { redact, warnIfSensitive }  from './redact.js';
 
+function substituteContext(result, opts) {
+  const pod  = opts.pod        || null;
+  const ns   = opts.namespace  || null;
+  const dep  = opts.deployment || null;
+
+  if (!pod && !ns && !dep) return;
+
+  // kubectl command to look up the image when we don't know it
+  const imageCmd = dep && ns
+    ? `$(kubectl get deploy ${dep} -n ${ns} -o jsonpath='{.spec.template.spec.containers[0].image}')`
+    : dep
+      ? `$(kubectl get deploy ${dep} -o jsonpath='{.spec.template.spec.containers[0].image}')`
+      : pod && ns
+        ? `$(kubectl get pod ${pod} -n ${ns} -o jsonpath='{.spec.containers[0].image}')`
+        : '<image>';
+
+  const subst = (str) => {
+    if (typeof str !== 'string') return str;
+    if (pod)  str = str.replace(/<pod(-name)?>/g, pod);
+    if (ns)   str = str.replace(/<namespace>/g,   ns);
+    if (dep)  str = str.replace(/<(deployment(-name)?|name)>/g, dep);
+    str = str.replace(/<image(:[^>]*)?>/g, imageCmd);
+    // kubectl commands without explicit -n: insert -n before any pipe or end of line
+    if (ns) {
+      str = str.replace(
+        /(kubectl (?:logs|describe pod|get pod|top pod|exec)(?:[^|\n])*?)(\s*\||\n|$)/g,
+        (m, cmd, end) => cmd.includes('-n ') ? m : `${cmd} -n ${ns}${end}`,
+      );
+    }
+    return str;
+  };
+
+  for (const field of ['commands', 'fixSteps', 'rootCause', 'summary']) {
+    if (result[field]) result[field] = subst(result[field]);
+  }
+}
+
 export async function runAnalyze(toolModule, systemPrompt, mockFn, file, opts) {
   let logText = '';
 
@@ -22,7 +59,12 @@ export async function runAnalyze(toolModule, systemPrompt, mockFn, file, opts) {
   } else if (opts.stdin || (!process.stdin.isTTY && !opts.interactive && !file)) {
     logText = await readStdin();
     if (!logText.trim()) { console.error(chalk.red('  No input from stdin.')); process.exit(1); }
-    if (!opts.json) console.log(chalk.dim(`  Input: stdin (${logText.length} chars)\n`));
+    if (!opts.json) {
+      console.log(chalk.dim(`  Input: stdin (${logText.length} chars)\n`));
+      if (logText.length < 200) {
+        console.log(chalk.dim('  Tip: for richer analysis with exact pod names, use --pod <name> -n <namespace>\n'));
+      }
+    }
 
   } else if (opts.interactive) {
     console.log(chalk.dim('  Paste your log. Type END on a new line when done:\n'));
@@ -108,6 +150,9 @@ export async function runAnalyze(toolModule, systemPrompt, mockFn, file, opts) {
     process.exit(1);
   }
   process.off('SIGINT', onSigint);
+
+  // Substitute known values into rule-engine placeholders
+  substituteContext(result, opts);
 
   addHistory(toolModule, logText, result);
 

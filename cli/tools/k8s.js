@@ -156,7 +156,8 @@ Examples:
         const combined = podSections.join('\n\n');
         opts.stdin = true;
         process.stdin.destroy();
-        await runAnalyze('k8s', SYSTEM_PROMPT, mockAnalyze, null, { ...opts, _injected: combined });
+        // pass first pod so substituteContext can resolve <pod> placeholders
+        await runAnalyze('k8s', SYSTEM_PROMPT, mockAnalyze, null, { ...opts, pod: opts.pod ?? pods[0], _injected: combined });
         return;
       }
 

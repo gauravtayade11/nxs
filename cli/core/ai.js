@@ -104,7 +104,7 @@ export async function analyze(logText, systemPrompt, mockFn, opts = {}) {
     let truncated = false;
     if (input.length > GROQ_MAX_CHARS) { input = input.slice(0, GROQ_MAX_CHARS); truncated = true; }
     try {
-      const raw = await callGroq(augmentedPrompt, `Analyze this log. In the "commands" field you MUST use the exact pod names, deployment names, namespaces, and other identifiers found in the log below — never generic placeholders like <pod-name> or <namespace>.\n\n${input}`);
+      const raw = await callGroq(augmentedPrompt, `Analyze this log. For the "commands" field: if pod names, deployment names, or namespaces appear in the log, use those exact values. If they do NOT appear in the log, do NOT use angle-bracket placeholders like <pod-name> or <namespace> — instead write the kubectl discovery command that would find them (e.g. "kubectl get pods -A | grep <keyword>" or "kubectl get pods --all-namespaces"). Never leave a command with an unresolved placeholder.\n\n${input}`);
       const result = JSON.parse(raw);
       if (truncated) result._truncated = true;
       result.via = 'ai-groq';
@@ -137,7 +137,7 @@ export async function analyze(logText, systemPrompt, mockFn, opts = {}) {
   // ── Anthropic ─────────────────────────────────────────────────────────────
   if (antKey) {
     try {
-      const raw = await callAnthropic(augmentedPrompt, `Analyze this log. In the "commands" field you MUST use the exact pod names, deployment names, namespaces, and other identifiers found in the log below — never generic placeholders like <pod-name> or <namespace>.\n\n${logText}`);
+      const raw = await callAnthropic(augmentedPrompt, `Analyze this log. For the "commands" field: if pod names, deployment names, or namespaces appear in the log, use those exact values. If they do NOT appear in the log, do NOT use angle-bracket placeholders like <pod-name> or <namespace> — instead write the kubectl discovery command that would find them (e.g. "kubectl get pods -A | grep <keyword>" or "kubectl get pods --all-namespaces"). Never leave a command with an unresolved placeholder.\n\n${logText}`);
       const result = JSON.parse(raw);
       result.via = 'ai-anthropic';
       if (result.confidence == null) result.confidence = 75;
