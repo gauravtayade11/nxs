@@ -35,12 +35,15 @@ function substituteContext(result, opts) {
     if (dep)  str = str.replace(/<(deployment(-name)?|name)>/g, dep);
     str = str.replace(/<image(:[^>]*)?>/g, imageCmd);
     // kubectl commands without explicit -n: insert -n before any pipe or end of line.
-    // Done line-by-line to avoid ReDoS from backtracking quantifiers.
+    // Done line-by-line with indexOf to avoid ReDoS from backtracking quantifiers.
     if (ns) {
-      const kubectlCmd = /^kubectl (?:logs|describe pod|get pod|top pod|exec)\b/;
+      const kubectlCmdRe = /kubectl (?:logs|describe pod|get pod|top pod|exec)\b/;
       str = str.split('\n').map((line) => {
-        if (!kubectlCmd.test(line) || line.includes('-n ')) return line;
-        const pipeIdx = line.indexOf('|');
+        const match = kubectlCmdRe.exec(line);
+        if (!match) return line;
+        const pipeIdx = line.indexOf('|', match.index);
+        const cmdPart = pipeIdx === -1 ? line.slice(match.index) : line.slice(match.index, pipeIdx);
+        if (cmdPart.includes('-n ')) return line;
         if (pipeIdx === -1) return `${line} -n ${ns}`;
         return `${line.slice(0, pipeIdx).trimEnd()} -n ${ns} | ${line.slice(pipeIdx + 1).trimStart()}`;
       }).join('\n');
