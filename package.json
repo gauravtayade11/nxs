@@ -44,6 +44,13 @@
   "bugs": {
     "url": "https://github.com/gauravtayade11/nxs/issues"
   },
+  "files": [
+    "cli/",
+    "scripts/",
+    "README.md",
+    "LICENSE",
+    "SECURITY.md"
+  ],
   "bin": {
     "nxs": "./cli/index.js"
   },

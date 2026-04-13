@@ -1,0 +1,11 @@
+# Global owner — reviews all PRs
+* @gauravtayade11
+
+# Core AI / runner logic
+/cli/core/ @gauravtayade11
+
+# CLI tools
+/cli/tools/ @gauravtayade11
+
+# CI/CD workflows
+/.github/workflows/ @gauravtayade11
