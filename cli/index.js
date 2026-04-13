@@ -905,4 +905,29 @@ if (process.argv.slice(2).length === 0) {
   process.exit(0);
 }
 
+// ── Startup version check (fire-and-forget, once per hour) ───────────────────
+let _updateAvailable = null;
+
+async function checkForUpdate() {
+  try {
+    const cfg = loadConfig();
+    if (Date.now() - (cfg._lastUpdateCheck ?? 0) < 60 * 60 * 1000) return;
+    const res = await fetch('https://registry.npmjs.org/@nextsight/nxs-cli/latest', {
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!res.ok) return;
+    const { version: latest } = await res.json();
+    cfg._lastUpdateCheck = Date.now();
+    saveConfig(cfg);
+    if (latest && latest !== VERSION) _updateAvailable = latest;
+  } catch { /* non-fatal */ }
+}
+
+process.on('exit', () => {
+  if (_updateAvailable) {
+    process.stderr.write(`\n  ${chalk.cyan(`⚡ nxs v${_updateAvailable} available`)}  ${chalk.dim('npm i -g @nextsight/nxs-cli')}\n\n`);
+  }
+});
+
+checkForUpdate();
 program.parse();
