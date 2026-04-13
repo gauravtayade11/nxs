@@ -595,6 +595,88 @@ async function runAiAnalysis(podMap) {
   }
 }
 
+async function runWatchMode(opts, threshold, ns, nsLabel) {
+  const intervalMin = Math.max(1, Number.parseInt(opts.interval, 10) || 5);
+  const intervalMs  = intervalMin * 60 * 1000;
+
+  if (!opts.json) {
+    printBanner('Predict — failure prediction engine');
+    console.log(chalk.dim(`  Scanning: ${nsLabel}  |  Threshold: ${threshold}%  |  Interval: ${intervalMin}m\n`));
+    console.log(chalk.dim('  Watch mode active — Ctrl+C to stop\n'));
+    console.log('  ' + chalk.dim('─'.repeat(54)));
+  }
+
+  let prevKeys = new Set();
+
+  const tick = async () => {
+    const ts = new Date().toLocaleTimeString();
+    if (!opts.json) console.log(`\n  ${chalk.dim('◷')} ${chalk.dim(`Scan at ${ts}`)}`);
+
+    const { risks, podMap } = await runScan(opts, threshold, ns);
+    const currentKeys = new Set(Object.keys(podMap));
+
+    if (opts.json) {
+      risks.sort((a, b) => b.score - a.score);
+      const critical = risks.filter(r => r.severity === 'critical');
+      const warning  = risks.filter(r => r.severity === 'warning');
+      console.log(JSON.stringify({
+        ts, namespace: opts.namespace ?? 'all', threshold,
+        total: risks.length, critical: critical.length, warning: warning.length,
+        new: [...currentKeys].filter(k => !prevKeys.has(k)).length,
+        resolved: [...prevKeys].filter(k => !currentKeys.has(k)).length,
+        risks,
+      }, null, 2));
+      prevKeys = currentKeys;
+      return;
+    }
+
+    const newKeys      = [...currentKeys].filter(k => !prevKeys.has(k));
+    const resolvedKeys = [...prevKeys].filter(k => !currentKeys.has(k));
+
+    if (newKeys.length > 0) {
+      console.log('');
+      for (const key of newKeys) {
+        const pod     = podMap[key];
+        const podName = pod.resource.replace(/^pod\//, '');
+        const badge   = pod.severity === 'critical' ? chalk.bgRed.white.bold(' CRITICAL ') : chalk.bgYellow.black.bold(' WARNING  ');
+        const icon    = pod.severity === 'critical' ? chalk.red('✗') : chalk.yellow('⚠');
+        console.log(`  ${icon}  ${chalk.white.bold('NEW RISK')}  ${chalk.white(podName)}  ${badge}`);
+        for (const f of pod.findings) console.log(`     ${chalk.hex('#94a3b8')(f)}`);
+        console.log(`     ${chalk.dim('→')} ${chalk.yellow(pod.primaryRisk)}`);
+        const actions = generateActions(podName, pod.namespace, pod);
+        for (const { text, cmd } of actions.slice(0, 2)) {
+          console.log(`     ${chalk.dim('›')} ${chalk.hex('#94a3b8')(text)}`);
+          if (cmd) console.log(`       ${chalk.cyan(cmd)}`);
+        }
+      }
+    }
+
+    for (const key of resolvedKeys) {
+      const [resource] = key.split('::');
+      console.log(`  ${chalk.green('✓')}  ${chalk.green.bold('RESOLVED')}  ${chalk.dim(resource.replace(/^pod\//, ''))}`);
+    }
+
+    if (newKeys.length === 0 && resolvedKeys.length === 0) {
+      const count = currentKeys.size;
+      console.log(count === 0
+        ? `  ${chalk.green('✓')} ${chalk.dim('All clear — no at-risk pods')}`
+        : `  ${chalk.dim(`${count} at-risk pod(s) unchanged`)}`);
+    }
+
+    console.log('  ' + chalk.dim('─'.repeat(54)));
+    prevKeys = currentKeys;
+  };
+
+  await tick();
+  const timer = setInterval(tick, intervalMs);
+  process.once('SIGINT', () => {
+    clearInterval(timer);
+    console.log('\n' + chalk.dim('  Watch stopped.\n'));
+    process.exit(0);
+  });
+  await new Promise(() => {});
+}
+
 export function registerPredict(program) {
   program
     .command('predict')
@@ -620,101 +702,7 @@ Examples:
 
       // ── Watch mode ────────────────────────────────────────────────────────
       if (opts.watch) {
-        const intervalMin = Math.max(1, Number.parseInt(opts.interval, 10) || 5);
-        const intervalMs  = intervalMin * 60 * 1000;
-
-        if (!opts.json) {
-          printBanner('Predict — failure prediction engine');
-          console.log(chalk.dim(`  Scanning: ${nsLabel}  |  Threshold: ${threshold}%  |  Interval: ${intervalMin}m\n`));
-          console.log(chalk.dim('  Watch mode active — Ctrl+C to stop\n'));
-          console.log('  ' + chalk.dim('─'.repeat(54)));
-        }
-
-        let prevKeys = new Set();
-
-        const tick = async () => {
-          const ts = new Date().toLocaleTimeString();
-
-          if (!opts.json) {
-            console.log(`\n  ${chalk.dim('◷')} ${chalk.dim(`Scan at ${ts}`)}`);
-          }
-
-          const { risks, podMap } = await runScan(opts, threshold, ns);
-          const currentKeys = new Set(Object.keys(podMap));
-
-          if (opts.json) {
-            risks.sort((a, b) => b.score - a.score);
-            const critical = risks.filter(r => r.severity === 'critical');
-            const warning  = risks.filter(r => r.severity === 'warning');
-            console.log(JSON.stringify({
-              ts, namespace: opts.namespace ?? 'all', threshold,
-              total: risks.length, critical: critical.length, warning: warning.length,
-              new: [...currentKeys].filter(k => !prevKeys.has(k)).length,
-              resolved: [...prevKeys].filter(k => !currentKeys.has(k)).length,
-              risks,
-            }, null, 2));
-            prevKeys = currentKeys;
-            return;
-          }
-
-          // ── Diff: new at-risk pods ──
-          const newKeys      = [...currentKeys].filter(k => !prevKeys.has(k));
-          const resolvedKeys = [...prevKeys].filter(k => !currentKeys.has(k));
-
-          if (newKeys.length > 0) {
-            console.log('');
-            for (const key of newKeys) {
-              const pod = podMap[key];
-              const podName = pod.resource.replace(/^pod\//, '');
-              const badge = pod.severity === 'critical'
-                ? chalk.bgRed.white.bold(' CRITICAL ')
-                : chalk.bgYellow.black.bold(' WARNING  ');
-              const icon = pod.severity === 'critical' ? chalk.red('✗') : chalk.yellow('⚠');
-              console.log(`  ${icon}  ${chalk.white.bold(`NEW RISK`)}  ${chalk.white(podName)}  ${badge}`);
-              for (const f of pod.findings) console.log(`     ${chalk.hex('#94a3b8')(f)}`);
-              console.log(`     ${chalk.dim('→')} ${chalk.yellow(pod.primaryRisk)}`);
-              // Show fix commands
-              const actions = generateActions(podName, pod.namespace, pod);
-              for (const { text, cmd } of actions.slice(0, 2)) {
-                console.log(`     ${chalk.dim('›')} ${chalk.hex('#94a3b8')(text)}`);
-                if (cmd) console.log(`       ${chalk.cyan(cmd)}`);
-              }
-            }
-          }
-
-          if (resolvedKeys.length > 0) {
-            console.log('');
-            for (const key of resolvedKeys) {
-              const [resource] = key.split('::');
-              const podName = resource.replace(/^pod\//, '');
-              console.log(`  ${chalk.green('✓')}  ${chalk.green.bold('RESOLVED')}  ${chalk.dim(podName)}`);
-            }
-          }
-
-          if (newKeys.length === 0 && resolvedKeys.length === 0) {
-            const count = currentKeys.size;
-            if (count === 0) {
-              console.log(`  ${chalk.green('✓')} ${chalk.dim('All clear — no at-risk pods')}`);
-            } else {
-              console.log(`  ${chalk.dim(`${count} at-risk pod(s) unchanged`)}`);
-            }
-          }
-
-          console.log('  ' + chalk.dim('─'.repeat(54)));
-          prevKeys = currentKeys;
-        };
-
-        // First scan immediately
-        await tick();
-        // Then loop
-        const timer = setInterval(tick, intervalMs);
-        process.once('SIGINT', () => {
-          clearInterval(timer);
-          console.log('\n' + chalk.dim('  Watch stopped.\n'));
-          process.exit(0);
-        });
-        // Block forever
-        await new Promise(() => {});
+        await runWatchMode(opts, threshold, ns, nsLabel);
         return;
       }
 

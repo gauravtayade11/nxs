@@ -272,6 +272,52 @@ async function saveClusterReport(results, opts, affected, clean, errored, totalC
   console.log(chalk.green(`\n  ✓ Report saved to ${opts.output}\n`));
 }
 
+async function scanImageDirect(opts) {
+  if (!opts.json) console.log(chalk.dim(`  Running trivy on image: ${chalk.white(opts.image)}\n`));
+  const { stdout, stderr } = await run(`trivy image --no-progress "${opts.image}" 2>/dev/null`, { timeout: 300000 });
+  const output = stdout || stderr;
+  if (!output.trim()) {
+    console.error(chalk.red('  trivy returned no output.'));
+    process.exit(1);
+  }
+  await runAnalyze('sec', SYSTEM_PROMPT, mockAnalyze, null, { ...opts, _injected: output });
+}
+
+async function scanPodImage(opts) {
+  const ns = opts.namespace ? `-n "${opts.namespace}"` : '';
+  if (!opts.json) console.log(chalk.dim(`  Fetching image from pod: ${chalk.white(opts.pod)}\n`));
+
+  const { stdout: podJson } = await run(`kubectl get pod "${opts.pod}" ${ns} -o json 2>/dev/null`);
+  if (!podJson) {
+    console.error(chalk.red(`  Pod '${opts.pod}' not found or kubectl not configured.`));
+    process.exit(1);
+  }
+
+  let image;
+  try {
+    image = JSON.parse(podJson).spec?.containers?.[0]?.image;
+  } catch {
+    console.error(chalk.red('  Could not parse pod spec.'));
+    process.exit(1);
+  }
+
+  if (!image) {
+    console.error(chalk.red('  Could not detect image from pod spec.'));
+    process.exit(1);
+  }
+
+  console.log(chalk.dim(`  Image: ${chalk.white(image)}\n`));
+
+  if (!await hasBin('trivy')) {
+    console.error(chalk.red('  trivy not found. Install: https://trivy.dev/latest/getting-started/installation/'));
+    console.error(chalk.dim(`  Or run manually: trivy image ${image} | nxs sec scan --stdin`));
+    process.exit(1);
+  }
+
+  const { stdout, stderr } = await run(`trivy image --no-progress ${image} 2>/dev/null`, { timeout: 300000 });
+  await runAnalyze('sec', SYSTEM_PROMPT, mockAnalyze, null, { ...opts, _injected: stdout || stderr });
+}
+
 export function registerSec(program) {
   const sec = program
     .command('sec')
@@ -300,62 +346,12 @@ Examples:
   $ nxs sec scan --pod my-pod -n production
   $ nxs sec scan --image nginx:latest`)
     .action(async (file, opts) => {
-      if (opts.image) { if (!await checkDeps('trivy'))          { process.exit(1); } }
+      if (opts.image) { if (!await checkDeps('trivy'))           { process.exit(1); } }
       if (opts.pod)   { if (!await checkDeps('kubectl', 'trivy')) { process.exit(1); } }
       if (!opts.json) printBanner('Security scan analyzer');
 
-      // --image: run trivy locally and pipe output
-      if (opts.image) {
-        if (!opts.json) console.log(chalk.dim(`  Running trivy on image: ${chalk.white(opts.image)}\n`));
-        const { stdout, stderr } = await run(`trivy image --no-progress "${opts.image}" 2>/dev/null`, { timeout: 300000 });
-        const output = stdout || stderr;
-        if (!output.trim()) {
-          console.error(chalk.red('  trivy returned no output.'));
-          process.exit(1);
-        }
-        await runAnalyze('sec', SYSTEM_PROMPT, mockAnalyze, null, { ...opts, _injected: output });
-        return;
-      }
-
-      // --pod: get image from pod, then scan with trivy
-      if (opts.pod) {
-        const ns = opts.namespace ? `-n "${opts.namespace}"` : '';
-        if (!opts.json) console.log(chalk.dim(`  Fetching image from pod: ${chalk.white(opts.pod)}\n`));
-
-        const { stdout: podJson } = await run(`kubectl get pod "${opts.pod}" ${ns} -o json 2>/dev/null`);
-        if (!podJson) {
-          console.error(chalk.red(`  Pod '${opts.pod}' not found or kubectl not configured.`));
-          process.exit(1);
-        }
-
-        let image;
-        try {
-          const pod = JSON.parse(podJson);
-          image = pod.spec?.containers?.[0]?.image;
-        } catch {
-          console.error(chalk.red('  Could not parse pod spec.'));
-          process.exit(1);
-        }
-
-        if (!image) {
-          console.error(chalk.red('  Could not detect image from pod spec.'));
-          process.exit(1);
-        }
-
-        console.log(chalk.dim(`  Image: ${chalk.white(image)}\n`));
-
-        const hasTrivy = await hasBin('trivy');
-        if (!hasTrivy) {
-          console.error(chalk.red('  trivy not found. Install: https://trivy.dev/latest/getting-started/installation/'));
-          console.error(chalk.dim(`  Or run manually: trivy image ${image} | nxs sec scan --stdin`));
-          process.exit(1);
-        }
-
-        const { stdout, stderr } = await run(`trivy image --no-progress ${image} 2>/dev/null`, { timeout: 300000 });
-        const output = stdout || stderr;
-        await runAnalyze('sec', SYSTEM_PROMPT, mockAnalyze, null, { ...opts, _injected: output });
-        return;
-      }
+      if (opts.image) { await scanImageDirect(opts); return; }
+      if (opts.pod)   { await scanPodImage(opts);    return; }
 
       await runAnalyze('sec', SYSTEM_PROMPT, mockAnalyze, file, opts);
     });

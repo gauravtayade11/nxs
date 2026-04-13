@@ -77,6 +77,68 @@ function mockAnalyze(logText) {
   };
 }
 
+async function debugDeployment(opts) {
+  const ns = opts.namespace ? `-n "${opts.namespace}"` : '';
+  if (!opts.json) console.log(chalk.dim(`  Fetching pods for deployment: ${chalk.white(opts.deployment)}\n`));
+
+  const deployR = await run(`kubectl get deploy "${opts.deployment}" ${ns} -o json 2>/dev/null`);
+  if (!deployR.stdout?.trim()) {
+    console.error(chalk.red(`  Deployment '${opts.deployment}' not found or kubectl not configured.`));
+    process.exit(1);
+  }
+
+  let pods = [];
+  try {
+    const deploy       = JSON.parse(deployR.stdout);
+    const matchLabels  = deploy.spec?.selector?.matchLabels ?? {};
+    const labelSel     = Object.entries(matchLabels).map(([k, v]) => `${k}=${v}`).join(',');
+    const podsR        = await run(`kubectl get pods ${ns} -l '${labelSel}' -o jsonpath='{.items[*].metadata.name}' 2>/dev/null`);
+    pods = podsR.stdout.trim().split(/\s+/).filter(Boolean);
+  } catch {
+    console.error(chalk.red('  Failed to parse deployment info. Check: kubectl version / kubectl auth'));
+    process.exit(1);
+  }
+
+  if (pods.length === 0) {
+    console.error(chalk.red(`  No pods found for deployment '${opts.deployment}'.`));
+    process.exit(1);
+  }
+
+  if (!opts.json) console.log(chalk.dim(`  Found ${pods.length} pod(s): ${pods.join(', ')}\n`));
+
+  const podSections = await Promise.all(pods.map(async (pod) => {
+    const [logsR, descR] = await Promise.all([
+      run(`kubectl logs "${pod}" ${ns} --tail=100 --previous 2>/dev/null || kubectl logs "${pod}" ${ns} --tail=100 2>/dev/null`),
+      run(`kubectl describe pod "${pod}" ${ns} 2>/dev/null`),
+    ]);
+    return [
+      `=== POD: ${pod} — LOGS ===`, logsR.stdout?.trim() || '(no logs)',
+      `=== POD: ${pod} — DESCRIBE ===`, descR.stdout?.trim() || '(no describe output)',
+    ].join('\n');
+  }));
+
+  return { combined: podSections.join('\n\n'), pods };
+}
+
+async function debugPod(opts) {
+  const ns = opts.namespace ? `-n "${opts.namespace}"` : '';
+  if (!opts.json) console.log(chalk.dim(`  Fetching logs + describe for pod: ${chalk.white(opts.pod)}\n`));
+  const [logsR, descR] = await Promise.all([
+    run(`kubectl logs "${opts.pod}" ${ns} --previous 2>/dev/null || kubectl logs "${opts.pod}" ${ns} 2>/dev/null`),
+    run(`kubectl describe pod "${opts.pod}" ${ns} 2>/dev/null`),
+  ]);
+  const combined = [
+    logsR.stdout ? `=== LOGS ===\n${logsR.stdout}` : '',
+    descR.stdout ? `=== DESCRIBE ===\n${descR.stdout}` : '',
+  ].filter(Boolean).join('\n\n');
+
+  if (!combined.trim()) {
+    console.error(chalk.red(`  Pod '${opts.pod}' not found or kubectl not configured.`));
+    process.exit(1);
+  }
+  return combined;
+}
+
 export function registerK8s(program) {
   const k8s = program
     .command('k8s')
@@ -110,74 +172,16 @@ Examples:
       }
       if (!opts.json) printBanner('Kubernetes deep-dive debugger');
 
-      // --deployment: fetch logs from all pods in the deployment
       if (opts.deployment) {
-        const ns = opts.namespace ? `-n "${opts.namespace}"` : '';
-        if (!opts.json) console.log(chalk.dim(`  Fetching pods for deployment: ${chalk.white(opts.deployment)}\n`));
-
-        const deployR = await run(`kubectl get deploy "${opts.deployment}" ${ns} -o json 2>/dev/null`);
-        if (!deployR.stdout?.trim()) {
-          console.error(chalk.red(`  Deployment '${opts.deployment}' not found or kubectl not configured.`));
-          process.exit(1);
-        }
-
-        let pods = [];
-        try {
-          const deploy = JSON.parse(deployR.stdout);
-          const matchLabels = deploy.spec?.selector?.matchLabels ?? {};
-          const labelSelector = Object.entries(matchLabels).map(([k, v]) => `${k}=${v}`).join(',');
-          const podsR = await run(`kubectl get pods ${ns} -l '${labelSelector}' -o jsonpath='{.items[*].metadata.name}' 2>/dev/null`);
-          pods = podsR.stdout.trim().split(/\s+/).filter(Boolean);
-        } catch {
-          console.error(chalk.red('  Failed to parse deployment info. Check: kubectl version / kubectl auth'));
-          process.exit(1);
-        }
-
-        if (pods.length === 0) {
-          console.error(chalk.red(`  No pods found for deployment '${opts.deployment}'.`));
-          process.exit(1);
-        }
-
-        if (!opts.json) console.log(chalk.dim(`  Found ${pods.length} pod(s): ${pods.join(', ')}\n`));
-
-        const podSections = await Promise.all(pods.map(async (pod) => {
-          const [logsR, descR] = await Promise.all([
-            run(`kubectl logs "${pod}" ${ns} --tail=100 --previous 2>/dev/null || kubectl logs "${pod}" ${ns} --tail=100 2>/dev/null`),
-            run(`kubectl describe pod "${pod}" ${ns} 2>/dev/null`),
-          ]);
-          return [
-            `=== POD: ${pod} — LOGS ===`,
-            logsR.stdout?.trim() || '(no logs)',
-            `=== POD: ${pod} — DESCRIBE ===`,
-            descR.stdout?.trim() || '(no describe output)',
-          ].join('\n');
-        }));
-
-        const combined = podSections.join('\n\n');
+        const { combined, pods } = await debugDeployment(opts);
         opts.stdin = true;
         process.stdin.destroy();
-        // pass first pod so substituteContext can resolve <pod> placeholders
         await runAnalyze('k8s', SYSTEM_PROMPT, mockAnalyze, null, { ...opts, pod: opts.pod ?? pods[0], _injected: combined });
         return;
       }
 
-      // --pod: auto-fetch logs + describe, no piping needed
       if (opts.pod) {
-        const ns = opts.namespace ? `-n "${opts.namespace}"` : '';
-        if (!opts.json) console.log(chalk.dim(`  Fetching logs + describe for pod: ${chalk.white(opts.pod)}\n`));
-        const [logsR, descR] = await Promise.all([
-          run(`kubectl logs "${opts.pod}" ${ns} --previous 2>/dev/null || kubectl logs "${opts.pod}" ${ns} 2>/dev/null`),
-          run(`kubectl describe pod "${opts.pod}" ${ns} 2>/dev/null`),
-        ]);
-        const combined = [
-          logsR.stdout ? `=== LOGS ===\n${logsR.stdout}` : '',
-          descR.stdout ? `=== DESCRIBE ===\n${descR.stdout}` : '',
-        ].filter(Boolean).join('\n\n');
-
-        if (!combined.trim()) {
-          console.error(chalk.red(`  Pod '${opts.pod}' not found or kubectl not configured.`));
-          process.exit(1);
-        }
+        const combined = await debugPod(opts);
         opts.stdin = true;
         process.stdin.destroy();
         await runAnalyze('k8s', SYSTEM_PROMPT, mockAnalyze, null, { ...opts, _injected: combined });
