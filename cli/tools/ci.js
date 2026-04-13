@@ -148,7 +148,7 @@ export function registerCi(program) {
     .option('-i, --interactive', 'Paste log interactively')
     .option('--run <id>', 'Fetch a GitHub Actions run by ID (requires gh CLI)')
     .option('--latest', 'Auto-fetch the most recent failed GitHub Actions run (requires gh CLI)')
-    .option('--no-chat', 'Skip follow-up chat')
+    .option('--chat', 'Enable follow-up chat after analysis')
     .option('--redact', 'Scrub secrets before sending to AI')
     .option('-o, --output <file>', 'Save analysis to markdown file')
     .option('--fail-on <severity>', 'Exit code 1 if severity matches (critical|warning)')

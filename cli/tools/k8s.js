@@ -91,7 +91,7 @@ export function registerK8s(program) {
     .option('-d, --deployment <name>', 'Deployment name — fetches logs from all pods in the deployment')
     .option('-n, --namespace <ns>', 'Namespace (default: default)')
     .option('-j, --json', 'Output as JSON')
-    .option('--no-chat', 'Skip follow-up chat')
+    .option('--chat', 'Enable follow-up chat after analysis')
     .option('--redact', 'Scrub secrets/tokens from log before sending to AI')
     .option('-o, --output <file>', 'Save analysis to a markdown file')
     .option('--fail-on <severity>', 'Exit code 1 if severity matches (critical|warning)')

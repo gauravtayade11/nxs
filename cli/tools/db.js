@@ -119,7 +119,7 @@ export function registerDb(program) {
     .option('-i, --interactive', 'Paste error interactively')
     .option('-j, --json', 'Output as JSON')
     .option('--fast', 'Rules engine only — no AI call (instant, offline)')
-    .option('--no-chat', 'Skip follow-up chat')
+    .option('--chat', 'Enable follow-up chat after analysis')
     .option('--redact', 'Scrub secrets/passwords before sending to AI')
     .option('-o, --output <file>', 'Save analysis to a markdown file')
     .option('--fail-on <severity>', 'Exit code 1 if severity matches (critical|warning)')

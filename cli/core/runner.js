@@ -157,7 +157,7 @@ export async function runAnalyze(toolModule, systemPrompt, mockFn, file, opts) {
     process.exit(1);
   }
 
-  if (opts.chat !== false) {
+  if (opts.chat === true) {
     await runChatLoop(logText, result);
   }
 

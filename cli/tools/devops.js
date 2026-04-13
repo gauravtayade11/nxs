@@ -69,7 +69,7 @@ export function registerDevops(program) {
     .option('-s, --stdin', 'Read from stdin')
     .option('-i, --interactive', 'Paste log interactively')
     .option('-j, --json', 'Output as JSON')
-    .option('--no-chat', 'Skip follow-up chat')
+    .option('--chat', 'Enable follow-up chat after analysis')
     .option('--redact', 'Scrub secrets/tokens from log before sending to AI')
     .option('-o, --output <file>', 'Save analysis to a markdown file')
     .option('--fail-on <severity>', 'Exit code 1 if severity matches (critical|warning)')
@@ -100,14 +100,14 @@ Examples:
   devops
     .command('watch <file>')
     .description('Tail a live log file and auto-analyze when errors appear')
-    .option('--no-chat', 'Skip follow-up chat after each analysis')
+    .option('--chat', 'Enable follow-up chat after each analysis')
     .option('--redact', 'Scrub secrets before sending to AI')
     .option('-o, --output <file>', 'Append each analysis to a markdown file')
     .option('--fail-on <severity>', 'Exit code 1 on first match of severity')
     .addHelpText('after', `
 Examples:
   $ nxs devops watch /var/log/app.log
-  $ nxs devops watch pipeline.log --no-chat
+  $ nxs devops watch pipeline.log --chat
   $ nxs devops watch deploy.log --fail-on critical`)
     .action(async (file, opts) => {
       printBanner('CI/CD · Docker · Terraform debugger');

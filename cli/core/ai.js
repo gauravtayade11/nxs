@@ -13,7 +13,9 @@ const AI_SCHEMA_SUFFIX = `
 Additionally, always include these fields in your JSON response:
 - "confidence": integer 0–100. How confident you are in this specific diagnosis given the log evidence. 95+ = textbook match. 70–94 = likely but needs verification. Below 70 = best guess.
 - "impact": string. What concretely fails or degrades: which service, how many users affected, for how long.
-- "suggestions": array of 2–3 strings. Proactive improvements BEYOND just fixing the immediate error — e.g. add monitoring, improve resilience, prevent recurrence.`;
+- "suggestions": array of 2–3 strings. Proactive improvements BEYOND just fixing the immediate error — e.g. add monitoring, improve resilience, prevent recurrence.
+
+CRITICAL RULE for "commands" field: Use the EXACT resource names, namespaces, pod names, image names, and values extracted from the log. NEVER use placeholders like <pod-name>, <namespace>, <image>, or <resource>. If a value appears in the log, use it verbatim in the command.`;
 
 async function callGroq(systemPrompt, userMessage, jsonMode = true) {
   const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -28,7 +30,7 @@ async function callGroq(systemPrompt, userMessage, jsonMode = true) {
         { role: 'system', content: systemPrompt },
         ...(Array.isArray(userMessage) ? userMessage : [{ role: 'user', content: userMessage }]),
       ],
-      ...(jsonMode ? { response_format: { type: 'json_object' } } : { max_tokens: 1024 }),
+      ...(jsonMode ? { response_format: { type: 'json_object' } } : { max_tokens: 2048 }),
     }),
   });
   if (!response.ok) {
@@ -39,12 +41,12 @@ async function callGroq(systemPrompt, userMessage, jsonMode = true) {
   return data.choices[0].message.content;
 }
 
-async function callAnthropic(systemPrompt, messages) {
+async function callAnthropic(systemPrompt, messages, jsonMode = true) {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   const response = await client.messages.create({
     model: 'claude-opus-4-6',
-    max_tokens: 2048,
-    thinking: { type: 'adaptive' },
+    max_tokens: jsonMode ? 2048 : 4096,
+    ...(jsonMode ? { thinking: { type: 'adaptive' } } : {}),
     system: systemPrompt,
     messages: Array.isArray(messages) ? messages : [{ role: 'user', content: messages }],
   });
@@ -102,7 +104,7 @@ export async function analyze(logText, systemPrompt, mockFn, opts = {}) {
     let truncated = false;
     if (input.length > GROQ_MAX_CHARS) { input = input.slice(0, GROQ_MAX_CHARS); truncated = true; }
     try {
-      const raw = await callGroq(augmentedPrompt, `Analyze this log:\n\n${input}`);
+      const raw = await callGroq(augmentedPrompt, `Analyze this log. In the "commands" field you MUST use the exact pod names, deployment names, namespaces, and other identifiers found in the log below — never generic placeholders like <pod-name> or <namespace>.\n\n${input}`);
       const result = JSON.parse(raw);
       if (truncated) result._truncated = true;
       result.via = 'ai-groq';
@@ -135,7 +137,7 @@ export async function analyze(logText, systemPrompt, mockFn, opts = {}) {
   // ── Anthropic ─────────────────────────────────────────────────────────────
   if (antKey) {
     try {
-      const raw = await callAnthropic(augmentedPrompt, `Analyze this log:\n\n${logText}`);
+      const raw = await callAnthropic(augmentedPrompt, `Analyze this log. In the "commands" field you MUST use the exact pod names, deployment names, namespaces, and other identifiers found in the log below — never generic placeholders like <pod-name> or <namespace>.\n\n${logText}`);
       const result = JSON.parse(raw);
       result.via = 'ai-anthropic';
       if (result.confidence == null) result.confidence = 75;
@@ -173,25 +175,31 @@ export async function analyze(logText, systemPrompt, mockFn, opts = {}) {
  * Follow-up chat with context from a previous analysis.
  */
 export async function chat(logText, result, messages) {
-  const context = `You are an expert engineer. You already analyzed this log:
+  const context = `You are a senior DevOps/SRE engineer doing live incident response. You already diagnosed this error.
 
-LOG (excerpt): ${logText.slice(0, 3000)}
+LOG (excerpt):
+${logText.slice(0, 3000)}
 
-ANALYSIS:
+YOUR DIAGNOSIS:
 - Tool: ${result.tool}
+- Severity: ${result.severity}
 - Summary: ${result.summary}
 - Root Cause: ${result.rootCause}
 - Fix Steps: ${result.fixSteps}
 - Commands: ${result.commands}
 
-Answer follow-up questions concisely.`;
+Rules for follow-up answers:
+1. Give EXACT, runnable commands — use the real resource names, namespaces, and values from the log above. Never use placeholders like <pod-name> or <namespace>.
+2. If the exact value is not in the log, say so explicitly and give the command with a note on how to find it.
+3. Be direct and actionable — skip preamble. Lead with the command or the answer.
+4. If asked how to fix something, give the full fix sequence: find → verify → apply → confirm.`;
 
   if (process.env.GROQ_API_KEY) {
     return callGroq(context, messages, false);
   }
 
   if (process.env.ANTHROPIC_API_KEY) {
-    return callAnthropic(context, messages);
+    return callAnthropic(context, messages, false);
   }
 
   await delay(600);
