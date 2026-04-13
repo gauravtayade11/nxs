@@ -34,12 +34,16 @@ function substituteContext(result, opts) {
     if (ns)   str = str.replace(/<namespace>/g,   ns);
     if (dep)  str = str.replace(/<(deployment(-name)?|name)>/g, dep);
     str = str.replace(/<image(:[^>]*)?>/g, imageCmd);
-    // kubectl commands without explicit -n: insert -n before any pipe or end of line
+    // kubectl commands without explicit -n: insert -n before any pipe or end of line.
+    // Done line-by-line to avoid ReDoS from backtracking quantifiers.
     if (ns) {
-      str = str.replace(
-        /(kubectl (?:logs|describe pod|get pod|top pod|exec)(?:[^|\n])*?)(\s*\||\n|$)/g,
-        (m, cmd, end) => cmd.includes('-n ') ? m : `${cmd} -n ${ns}${end}`,
-      );
+      const kubectlCmd = /^kubectl (?:logs|describe pod|get pod|top pod|exec)\b/;
+      str = str.split('\n').map((line) => {
+        if (!kubectlCmd.test(line) || line.includes('-n ')) return line;
+        const pipeIdx = line.indexOf('|');
+        if (pipeIdx === -1) return `${line} -n ${ns}`;
+        return `${line.slice(0, pipeIdx).trimEnd()} -n ${ns} | ${line.slice(pipeIdx + 1).trimStart()}`;
+      }).join('\n');
     }
     return str;
   };
