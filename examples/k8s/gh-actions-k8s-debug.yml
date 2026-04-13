@@ -1,0 +1,33 @@
+name: Debug Kubernetes failures with nxs k8s
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install nxs CLI
+        run: npm install -g @nextsight/nxs-cli
+
+      - name: Apply Kubernetes manifests
+        id: apply
+        run: |
+          set -o pipefail
+          kubectl apply -f k8s/ 2>&1 | tee apply.log
+
+      - name: Analyze failure with nxs k8s
+        if: failure()
+        run: |
+          echo "kubectl apply failed — analyzing with nxs k8s..."
+          # Use stdin mode so nxs can read the combined log.
+          nxs k8s debug --stdin < apply.log

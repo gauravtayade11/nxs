@@ -5,7 +5,12 @@
 content/
 VIDEO_DEMO.md
 TECHNICAL_GUIDE.md
+CODE_REVIEW.md
+MANUAL_DEMO.md
 demo/logs/
+
+# Test coverage
+coverage/
 
 # Dev scripts
 scripts/

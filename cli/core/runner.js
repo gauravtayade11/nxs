@@ -138,7 +138,8 @@ export async function runAnalyze(toolModule, systemPrompt, mockFn, file, opts) {
   try {
     result = await analyze(logText, systemPrompt, mockFn, { fast: !!opts.fast });
     const via = result.via === 'rules' ? chalk.cyan('rules engine') : result.via === 'ai-groq' ? chalk.green('Groq AI') : result.via === 'ai-anthropic' ? chalk.magenta('Claude AI') : chalk.dim('demo');
-    spinner.succeed(chalk.green('Analysis complete') + chalk.dim(`  via ${via}`));
+    const cacheHit = result._cached ? chalk.dim('  ⚡ cached') : '';
+    spinner.succeed(chalk.green('Analysis complete') + chalk.dim(`  via ${via}`) + cacheHit);
   } catch (err) {
     spinner.fail(chalk.red(`Analysis failed: ${err.message}`));
     if (err.message?.includes('ENOTFOUND') || err.message?.includes('fetch failed')) {
@@ -154,7 +155,8 @@ export async function runAnalyze(toolModule, systemPrompt, mockFn, file, opts) {
   // Substitute known values into rule-engine placeholders
   substituteContext(result, opts);
 
-  addHistory(toolModule, logText, result);
+  const { _cached, ...resultForHistory } = result;
+  addHistory(toolModule, logText, resultForHistory);
 
   // Pattern frequency — look back 7 days
   const errorTag = result.via === 'rules' && result.id
@@ -163,6 +165,11 @@ export async function runAnalyze(toolModule, systemPrompt, mockFn, file, opts) {
   const freq = getPatternFrequency(errorTag, 7);
 
   printResult(result, freq);
+
+  // AI disclaimer — shown for non-deterministic results only (not cached — those are already stable)
+  if ((result.via === 'ai-groq' || result.via === 'ai-anthropic') && !result._cached) {
+    console.log(chalk.dim('  ℹ  AI-generated — responses may vary. Verify all commands before running in production.\n'));
+  }
 
   // --notify slack: post result to Slack webhook
   if (opts.notify === 'slack') {

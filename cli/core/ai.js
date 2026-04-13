@@ -1,7 +1,64 @@
+import { createHash } from 'node:crypto';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
 import Anthropic from '@anthropic-ai/sdk';
 import { matchRule } from './rules.js';
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// ── Response cache (file-backed LRU, persists across invocations) ─────────
+
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const CACHE_MAX    = 20;
+const CACHE_FILE   = join(homedir(), '.nxs', 'cache.json');
+
+function cacheKey(systemPrompt, logText) {
+  return createHash('sha256').update(systemPrompt + '\n' + logText).digest('hex').slice(0, 16);
+}
+
+function loadCache() {
+  try {
+    if (!existsSync(CACHE_FILE)) return {};
+    return JSON.parse(readFileSync(CACHE_FILE, 'utf8'));
+  } catch { return {}; }
+}
+
+function saveCache(store) {
+  try {
+    const dir = join(homedir(), '.nxs');
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    writeFileSync(CACHE_FILE, JSON.stringify(store), 'utf8');
+  } catch { /* non-fatal */ }
+}
+
+const CACHE_ENABLED = process.env.NODE_ENV !== 'test';
+
+function cacheGet(key) {
+  if (!CACHE_ENABLED) return null;
+  const store = loadCache();
+  const entry = store[key];
+  if (!entry) return null;
+  if (Date.now() - entry.ts > CACHE_TTL_MS) {
+    delete store[key];
+    saveCache(store);
+    return null;
+  }
+  return JSON.parse(JSON.stringify(entry.result)); // deep clone to prevent mutation
+}
+
+function cacheSet(key, result) {
+  if (!CACHE_ENABLED) return;
+  const store = loadCache();
+  // Evict oldest entries if over max
+  const keys = Object.keys(store);
+  if (keys.length >= CACHE_MAX) {
+    const oldest = keys.sort((a, b) => store[a].ts - store[b].ts)[0];
+    delete store[oldest];
+  }
+  store[key] = { result, ts: Date.now() };
+  saveCache(store);
+}
 
 // ── Shared call logic ──────────────────────────────────────────────────────
 
@@ -148,12 +205,21 @@ export async function analyze(logText, systemPrompt, mockFn, opts = {}) {
     augmentedPrompt += `\n\nRule engine pre-match (confidence ${ruleResult.confidence}%): ${ruleResult.id ?? 'matched'}. Use this as a starting point but verify against the actual log.`;
   }
 
+  // Cache check — skip AI if we've seen this exact input recently
+  const key = cacheKey(augmentedPrompt, logText);
+  const cached = cacheGet(key);
+  if (cached) { cached._cached = true; return cached; }
+
   if (groqKey) {
     const { result, fallthrough } = await tryGroq(augmentedPrompt, logText, mockFn, ruleResult, antKey);
-    if (!fallthrough) return result;
+    if (!fallthrough) { if (result) cacheSet(key, result); return result; }
   }
 
-  if (antKey) return tryAnthropic(augmentedPrompt, logText, mockFn, ruleResult);
+  if (antKey) {
+    const result = await tryAnthropic(augmentedPrompt, logText, mockFn, ruleResult);
+    cacheSet(key, result);
+    return result;
+  }
 
   // No API keys
   if (ruleResult) { ruleResult._mock = true; return ruleResult; }

@@ -523,6 +523,19 @@ async function runAiAnalysis(podMap) {
     const result = await analyze(JSON.stringify(podSummary, null, 2), SYSTEM_PROMPT, null);
     spinner2.stop();
 
+    // Replace <pod>/<namespace> placeholders — Groq ignores the instruction sometimes
+    const firstCritical = podSummary.find(p => p.severity === 'critical') ?? podSummary[0];
+    if (firstCritical) {
+      const substStr = (s) => String(s)
+        .replace(/<pod(-name)?>/g, firstCritical.pod)
+        .replace(/<namespace>/g,   firstCritical.namespace)
+        .replace(/<image(:[^>]*)?>/g, `$(kubectl get pod ${firstCritical.pod} -n ${firstCritical.namespace} -o jsonpath='{.spec.containers[0].image}')`);
+      // Preserve original type so existing renderers work correctly
+      const subst = (v) => Array.isArray(v) ? v.map(substStr) : substStr(v);
+      if (result.commands)  result.commands  = subst(result.commands);
+      if (result.fixSteps)  result.fixSteps  = subst(result.fixSteps);
+    }
+
     const div = '  ' + chalk.dim('─'.repeat(54));
     console.log('\n' + div);
     console.log(`\n  ${chalk.bold('AI PREDICTION')}\n`);

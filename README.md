@@ -191,7 +191,7 @@ notify-failure:
           echo "Branch: ${{ github.ref_name }}"
           echo "Run URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           gh run view ${{ github.run_id }} 2>&1 || true
-        } | nxs ci analyze --stdin --notify slack --no-chat --json || true
+        } | nxs ci analyze --stdin --notify slack --json || true
       env:
         GH_TOKEN: ${{ github.token }}
         GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
@@ -236,7 +236,7 @@ kubectl logs my-pod --previous | nxs k8s debug --stdin --fast
 nxs ci analyze --latest --notify slack
 
 # Gate your CI pipeline — exit 1 on critical
-nxs devops analyze build.log --fail-on critical --no-chat
+nxs devops analyze build.log --fail-on critical
 
 # Explain any error you encounter
 nxs explain OOMKilled
@@ -410,12 +410,33 @@ NXS_API_KEY=secret SLACK_WEBHOOK_URL=https://... nxs serve --port 4000
 
 ## Security & Privacy
 
-- Logs are **never stored externally** — processed locally first
-- `--redact` flag scrubs secrets, tokens, and passwords before any AI call
-- Passive security warnings shown when sensitive patterns are detected in logs
-- `--fast` flag runs the rule engine only — **zero external API calls**
-- REST API secured via `NXS_API_KEY` header
-- Dependency scanning enabled via Snyk
+### Data flow
+
+```
+Your log → Rule engine (local, no network)
+         → If no high-confidence match → Groq or Claude API (your key, your account)
+```
+
+Your logs are **never stored by nxs** — they live in memory for the duration of one CLI invocation and are discarded immediately after.
+
+### What leaves your machine
+
+| Data | Destination | When |
+|---|---|---|
+| Log text (up to 8KB tail) | Groq or Claude API | Only when AI is invoked — not with `--fast` |
+| Analysis result | `~/.nxs/history.json` | Stored locally, never uploaded |
+| Analysis result (cache) | `~/.nxs/cache.json` | Stored locally, 5-min TTL |
+| Slack notification | Your Slack webhook/bot | Only when `--notify slack` is passed |
+
+### Protections built in
+
+- **`--redact`** — scrubs AWS keys, tokens, passwords, PEM blocks, bearer tokens, and 10+ other patterns with `[REDACTED]` before any API call
+- **Passive warning** — nxs detects sensitive patterns in logs and warns you even without `--redact`, so you can decide before sending
+- **`--fast`** — rule engine only, zero network calls, works fully offline
+- **API keys** — stored in `~/.nxs/config.json` (user home, mode 600) or `.env` — never hardcoded or logged
+- **REST API** (`nxs serve`) — secured via `NXS_API_KEY` header; unauthenticated requests are rejected
+- **Path traversal guard** — `--output` flag restricts writes to the current working directory only
+- **Dependency scanning** — Snyk monitors the package for known CVEs on every publish
 
 ---
 
@@ -444,7 +465,7 @@ nxs update                    # check for latest version
 ```bash
 --fast                  Rules engine only — no API call, works offline
 --notify slack          Post result to Slack
---no-chat               Skip follow-up chat
+--chat                  Enable follow-up Q&A after analysis (opt-in)
 -j, --json              Raw JSON output (for scripting / CI)
 -o, --output <file>     Save analysis as markdown
 --fail-on <severity>    Exit 1 if severity matches (critical|warning)
@@ -452,6 +473,8 @@ nxs update                    # check for latest version
 -s, --stdin             Read from stdin
 -i, --interactive       Paste log interactively
 ```
+
+**Response cache:** Identical inputs within 5 minutes return instantly from `~/.nxs/cache.json` (up to 20 entries). Shown as `⚡ cached` in output — no API call, no token cost.
 
 ---
 

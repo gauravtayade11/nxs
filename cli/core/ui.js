@@ -1,5 +1,7 @@
 import chalk from 'chalk';
 import { createRequire } from 'node:module';
+import { createInterface } from 'node:readline';
+import { Writable } from 'node:stream';
 
 const _require = createRequire(import.meta.url);
 export const VERSION = _require('../../package.json').version;
@@ -159,6 +161,19 @@ export function printResult(result, freq = null) {
 
 export function prompt(rl, q) {
   return new Promise((res) => rl.question(q, res));
+}
+
+export function promptSecret(q) {
+  return new Promise((resolve) => {
+    const muted = new Writable({ write(_chunk, _enc, cb) { cb(); } });
+    const rl = createInterface({ input: process.stdin, output: muted, terminal: true });
+    process.stdout.write(q);
+    rl.question('', (answer) => {
+      process.stdout.write('\n');
+      rl.close();
+      resolve(answer);
+    });
+  });
 }
 
 export async function readStdin() {

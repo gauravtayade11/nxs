@@ -37,6 +37,10 @@ coverage/
 # Internal docs
 DEMO.md
 DOCS.md
+VIDEO_DEMO.md
+CODE_REVIEW.md
+MANUAL_DEMO.md
+TECHNICAL_GUIDE.md
 
 # Content drafts (local only)
 content/

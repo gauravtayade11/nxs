@@ -2,11 +2,10 @@
 import { resolve } from 'node:path';
 import { config }  from 'dotenv';
 import { Command } from 'commander';
-import { createInterface } from 'node:readline';
 import chalk from 'chalk';
 
 import { applyConfig, loadConfig, saveConfig, loadHistory, CONFIG_FILE, HISTORY_FILE } from './core/config.js';
-import { printBanner, providerInfo, hr, prompt, VERSION } from './core/ui.js';
+import { printBanner, providerInfo, hr, prompt, promptSecret, VERSION } from './core/ui.js';
 import { registerDevops }  from './tools/devops.js';
 import { registerCloud }   from './tools/cloud.js';
 import { registerK8s }     from './tools/k8s.js';
@@ -550,20 +549,18 @@ Examples:
     }
 
     if (opts.setup) {
-      const rl = createInterface({ input: process.stdin, output: process.stdout });
       const cfg = loadConfig();
 
       console.log(chalk.bold('  Setup wizard — press Enter to skip\n'));
       console.log(chalk.dim('  Groq (free):      https://console.groq.com'));
       console.log(chalk.dim('  Anthropic Claude: https://console.anthropic.com\n'));
 
-      const groq = await prompt(rl, `  ${chalk.yellow('GROQ_API_KEY')}       › `);
+      const groq = await promptSecret(`  ${chalk.yellow('GROQ_API_KEY')}       › `);
       if (groq.trim()) cfg.GROQ_API_KEY = groq.trim();
 
-      const ant = await prompt(rl, `  ${chalk.yellow('ANTHROPIC_API_KEY')} › `);
+      const ant = await promptSecret(`  ${chalk.yellow('ANTHROPIC_API_KEY')} › `);
       if (ant.trim()) cfg.ANTHROPIC_API_KEY = ant.trim();
 
-      rl.close();
       saveConfig(cfg);
       console.log(chalk.green('\n  ✓ Config saved!\n'));
       console.log(chalk.dim(`  File: ${CONFIG_FILE}\n`));

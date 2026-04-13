@@ -24,6 +24,12 @@ Tool detection:
 - ci: GitHub Actions, Jenkins, GitLab CI, CircleCI, npm/pip install in pipeline
 - unknown: anything else
 
+CRITICAL RULE for "commands" field: Match commands strictly to the detected tool:
+- docker: ONLY docker, docker-compose, Dockerfile edits. FORBIDDEN: kubectl, helm, terraform
+- terraform: ONLY terraform CLI. FORBIDDEN: kubectl, helm, docker
+- ci: ONLY npm/yarn/pip, git, gh CLI, pipeline YAML edits. FORBIDDEN: kubectl, helm
+- Do NOT include kubectl or helm UNLESS the log contains explicit Kubernetes resource errors (e.g. "kubectl apply failed", "deployment.apps/...").
+
 Return ONLY valid JSON. No markdown fences.`;
 
 const MOCK = {
