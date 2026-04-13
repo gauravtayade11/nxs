@@ -55,7 +55,7 @@ jobs:
       - name: nxs devops analyze (mock mode)
         run: |
           echo "ERROR: npm install failed with exit code 1" | \
-          node cli/index.js devops analyze --stdin --json --no-chat
+          node cli/index.js devops analyze --stdin --json
         env:
           GROQ_API_KEY: ''
           ANTHROPIC_API_KEY: ''
@@ -93,7 +93,7 @@ jobs:
             echo "Smoke:    ${{ needs.smoke-test.result }}"
             echo "---"
             gh run view ${{ github.run_id }} 2>&1 || true
-          } | node cli/index.js ci analyze --stdin --notify slack --no-chat --json || true
+          } | node cli/index.js ci analyze --stdin --notify slack --json || true
         env:
           GH_TOKEN: ${{ github.token }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}

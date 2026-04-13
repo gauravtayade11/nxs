@@ -1,0 +1,48 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nxs-predict-nightly
+  labels:
+    app: nxs-predict
+spec:
+  # Run every day at 01:00
+  schedule: "0 1 * * *"
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          # Replace with a ServiceAccount that can read pods/namespaces and use metrics
+          serviceAccountName: nxs-predict
+          restartPolicy: Never
+          containers:
+            - name: nxs-predict
+              # Example base image; for production, consider building a small image
+              # with @nextsight/nxs-cli pre-installed.
+              image: node:22-alpine
+              imagePullPolicy: IfNotPresent
+              env:
+                - name: GROQ_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: nxs-secrets
+                      key: GROQ_API_KEY
+                - name: SLACK_WEBHOOK_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: nxs-secrets
+                      key: SLACK_WEBHOOK_URL
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  echo "[nxs predict] Installing CLI..."
+                  npm install -g @nextsight/nxs-cli
+
+                  echo "[nxs predict] Scanning namespace 'production' for at-risk pods..."
+                  # --ai enables Groq analysis when GROQ_API_KEY is set.
+                  # --notify slack posts a summary to SLACK_WEBHOOK_URL.
+                  nxs predict -n production --ai --notify slack || true
+

@@ -37,7 +37,7 @@ const MOCK_RESPONSES = {
     summary: 'Pod failing to start due to ImagePullBackOff — cannot pull container image.',
     rootCause: '1. Image name or tag is incorrect or does not exist.\n2. Registry requires authentication (imagePullSecrets missing).\n3. Network issue preventing registry access.',
     fixSteps: '- Verify the image name and tag in the deployment manifest.\n- Check the image exists in the registry.\n- If private registry, create and attach imagePullSecrets.',
-    commands: 'kubectl describe pod <pod-name>\nkubectl get events --sort-by=\'.metadata.creationTimestamp\'\nkubectl create secret docker-registry regcred --docker-server=<server> --docker-username=<user> --docker-password=<pass>',
+    commands: 'kubectl describe pod <pod-name>\nkubectl get events --sort-by=\'.metadata.creationTimestamp\'\nkubectl create secret docker-registry regcred --docker-server=<server> --docker-username=<user> --docker-password="$REGISTRY_PASSWORD"', // NOSONAR
   },
   crashloop: {
     tool: 'kubernetes', severity: 'critical', resource: 'Pod', namespace: 'default',
@@ -77,6 +77,68 @@ function mockAnalyze(logText) {
   };
 }
 
+async function debugDeployment(opts) {
+  const ns = opts.namespace ? `-n "${opts.namespace}"` : '';
+  if (!opts.json) console.log(chalk.dim(`  Fetching pods for deployment: ${chalk.white(opts.deployment)}\n`));
+
+  const deployR = await run(`kubectl get deploy "${opts.deployment}" ${ns} -o json 2>/dev/null`);
+  if (!deployR.stdout?.trim()) {
+    console.error(chalk.red(`  Deployment '${opts.deployment}' not found or kubectl not configured.`));
+    process.exit(1);
+  }
+
+  let pods = [];
+  try {
+    const deploy       = JSON.parse(deployR.stdout);
+    const matchLabels  = deploy.spec?.selector?.matchLabels ?? {};
+    const labelSel     = Object.entries(matchLabels).map(([k, v]) => `${k}=${v}`).join(',');
+    const podsR        = await run(`kubectl get pods ${ns} -l '${labelSel}' -o jsonpath='{.items[*].metadata.name}' 2>/dev/null`);
+    pods = podsR.stdout.trim().split(/\s+/).filter(Boolean);
+  } catch {
+    console.error(chalk.red('  Failed to parse deployment info. Check: kubectl version / kubectl auth'));
+    process.exit(1);
+  }
+
+  if (pods.length === 0) {
+    console.error(chalk.red(`  No pods found for deployment '${opts.deployment}'.`));
+    process.exit(1);
+  }
+
+  if (!opts.json) console.log(chalk.dim(`  Found ${pods.length} pod(s): ${pods.join(', ')}\n`));
+
+  const podSections = await Promise.all(pods.map(async (pod) => {
+    const [logsR, descR] = await Promise.all([
+      run(`kubectl logs "${pod}" ${ns} --tail=100 --previous 2>/dev/null || kubectl logs "${pod}" ${ns} --tail=100 2>/dev/null`),
+      run(`kubectl describe pod "${pod}" ${ns} 2>/dev/null`),
+    ]);
+    return [
+      `=== POD: ${pod} — LOGS ===`, logsR.stdout?.trim() || '(no logs)',
+      `=== POD: ${pod} — DESCRIBE ===`, descR.stdout?.trim() || '(no describe output)',
+    ].join('\n');
+  }));
+
+  return { combined: podSections.join('\n\n'), pods };
+}
+
+async function debugPod(opts) {
+  const ns = opts.namespace ? `-n "${opts.namespace}"` : '';
+  if (!opts.json) console.log(chalk.dim(`  Fetching logs + describe for pod: ${chalk.white(opts.pod)}\n`));
+  const [logsR, descR] = await Promise.all([
+    run(`kubectl logs "${opts.pod}" ${ns} --previous 2>/dev/null || kubectl logs "${opts.pod}" ${ns} 2>/dev/null`),
+    run(`kubectl describe pod "${opts.pod}" ${ns} 2>/dev/null`),
+  ]);
+  const combined = [
+    logsR.stdout ? `=== LOGS ===\n${logsR.stdout}` : '',
+    descR.stdout ? `=== DESCRIBE ===\n${descR.stdout}` : '',
+  ].filter(Boolean).join('\n\n');
+
+  if (!combined.trim()) {
+    console.error(chalk.red(`  Pod '${opts.pod}' not found or kubectl not configured.`));
+    process.exit(1);
+  }
+  return combined;
+}
+
 export function registerK8s(program) {
   const k8s = program
     .command('k8s')
@@ -91,11 +153,12 @@ export function registerK8s(program) {
     .option('-d, --deployment <name>', 'Deployment name — fetches logs from all pods in the deployment')
     .option('-n, --namespace <ns>', 'Namespace (default: default)')
     .option('-j, --json', 'Output as JSON')
-    .option('--no-chat', 'Skip follow-up chat')
+    .option('--chat', 'Enable follow-up chat after analysis')
     .option('--redact', 'Scrub secrets/tokens from log before sending to AI')
     .option('-o, --output <file>', 'Save analysis to a markdown file')
     .option('--fail-on <severity>', 'Exit code 1 if severity matches (critical|warning)')
     .option('--notify <target>', 'Notify after analysis: slack')
+    .option('--fast', 'Rules engine only — no AI call (instant, offline)')
     .addHelpText('after', `
 Examples:
   $ nxs k8s debug pod-error.log
@@ -109,73 +172,16 @@ Examples:
       }
       if (!opts.json) printBanner('Kubernetes deep-dive debugger');
 
-      // --deployment: fetch logs from all pods in the deployment
       if (opts.deployment) {
-        const ns = opts.namespace ? `-n ${opts.namespace}` : '';
-        if (!opts.json) console.log(chalk.dim(`  Fetching pods for deployment: ${chalk.white(opts.deployment)}\n`));
-
-        const deployR = await run(`kubectl get deploy ${opts.deployment} ${ns} -o json 2>/dev/null`);
-        if (!deployR.stdout?.trim()) {
-          console.error(chalk.red(`  Deployment '${opts.deployment}' not found or kubectl not configured.`));
-          process.exit(1);
-        }
-
-        let pods = [];
-        try {
-          const deploy = JSON.parse(deployR.stdout);
-          const matchLabels = deploy.spec?.selector?.matchLabels ?? {};
-          const labelSelector = Object.entries(matchLabels).map(([k, v]) => `${k}=${v}`).join(',');
-          const podsR = await run(`kubectl get pods ${ns} -l '${labelSelector}' -o jsonpath='{.items[*].metadata.name}' 2>/dev/null`);
-          pods = podsR.stdout.trim().split(/\s+/).filter(Boolean);
-        } catch {
-          console.error(chalk.red('  Failed to parse deployment info.'));
-          process.exit(1);
-        }
-
-        if (pods.length === 0) {
-          console.error(chalk.red(`  No pods found for deployment '${opts.deployment}'.`));
-          process.exit(1);
-        }
-
-        if (!opts.json) console.log(chalk.dim(`  Found ${pods.length} pod(s): ${pods.join(', ')}\n`));
-
-        const podSections = await Promise.all(pods.map(async (pod) => {
-          const [logsR, descR] = await Promise.all([
-            run(`kubectl logs ${pod} ${ns} --tail=100 --previous 2>/dev/null || kubectl logs ${pod} ${ns} --tail=100 2>/dev/null`),
-            run(`kubectl describe pod ${pod} ${ns} 2>/dev/null`),
-          ]);
-          return [
-            `=== POD: ${pod} — LOGS ===`,
-            logsR.stdout?.trim() || '(no logs)',
-            `=== POD: ${pod} — DESCRIBE ===`,
-            descR.stdout?.trim() || '(no describe output)',
-          ].join('\n');
-        }));
-
-        const combined = podSections.join('\n\n');
+        const { combined, pods } = await debugDeployment(opts);
         opts.stdin = true;
         process.stdin.destroy();
-        await runAnalyze('k8s', SYSTEM_PROMPT, mockAnalyze, null, { ...opts, _injected: combined });
+        await runAnalyze('k8s', SYSTEM_PROMPT, mockAnalyze, null, { ...opts, pod: opts.pod ?? pods[0], _injected: combined });
         return;
       }
 
-      // --pod: auto-fetch logs + describe, no piping needed
       if (opts.pod) {
-        const ns = opts.namespace ? `-n ${opts.namespace}` : '';
-        if (!opts.json) console.log(chalk.dim(`  Fetching logs + describe for pod: ${chalk.white(opts.pod)}\n`));
-        const [logsR, descR] = await Promise.all([
-          run(`kubectl logs ${opts.pod} ${ns} --previous 2>/dev/null || kubectl logs ${opts.pod} ${ns} 2>/dev/null`),
-          run(`kubectl describe pod ${opts.pod} ${ns} 2>/dev/null`),
-        ]);
-        const combined = [
-          logsR.stdout ? `=== LOGS ===\n${logsR.stdout}` : '',
-          descR.stdout ? `=== DESCRIBE ===\n${descR.stdout}` : '',
-        ].filter(Boolean).join('\n\n');
-
-        if (!combined.trim()) {
-          console.error(chalk.red(`  Pod '${opts.pod}' not found or kubectl not configured.`));
-          process.exit(1);
-        }
+        const combined = await debugPod(opts);
         opts.stdin = true;
         process.stdin.destroy();
         await runAnalyze('k8s', SYSTEM_PROMPT, mockAnalyze, null, { ...opts, _injected: combined });
@@ -192,8 +198,165 @@ Examples:
     .option('--clear', 'Clear k8s history')
     .option('-j, --json', 'Output as JSON')
     .action(async (opts) => {
-      printBanner('Kubernetes deep-dive debugger');
+      if (!opts.json) printBanner('Kubernetes deep-dive debugger');
       await runHistory('k8s', opts);
+    });
+
+  k8s
+    .command('events')
+    .description('Fetch and AI-triage cluster events — surfaces warnings, errors, and evictions')
+    .option('-n, --namespace <ns>', 'Namespace (default: all namespaces)')
+    .option('--since <duration>', 'Only events newer than duration, e.g. 1h, 30m (default: 1h)', '1h')
+    .option('--top <n>', 'Number of most recent events to analyze (default: 50)', '50')
+    .option('--warnings-only', 'Show only Warning-type events (skip Normal)')
+    .option('-j, --json', 'Output as JSON')
+    .addHelpText('after', `
+Examples:
+  $ nxs k8s events
+  $ nxs k8s events -n production
+  $ nxs k8s events --warnings-only
+  $ nxs k8s events --since 30m --top 100`)
+    .action(async (opts) => {
+      if (!await checkDeps('kubectl')) { process.exit(1); }
+      if (!opts.json) printBanner('Kubernetes events triage');
+
+      const ns       = opts.namespace ? `-n "${opts.namespace}"` : '--all-namespaces';
+      const nsLabel  = opts.namespace ?? 'all namespaces';
+      const topN     = Math.max(1, Number.parseInt(opts.top, 10) || 50);
+      const since    = opts.since ?? '1h';
+
+      if (!opts.json) {
+        console.log(chalk.dim(`  Namespace: ${nsLabel}  |  Since: ${since}  |  Top: ${topN} events\n`));
+      }
+
+      const ora = (await import('ora')).default;
+      const spinner = opts.json ? null : ora('Fetching events…').start();
+
+      // Parse "1h" / "30m" into --field-selector-compatible since timestamp
+      function sinceToDate(s) {
+        const m = s.match(/^(\d+)(h|m|s)$/i);
+        if (!m) return null;
+        const n = Number.parseInt(m[1], 10);
+        const unit = m[2].toLowerCase();
+        const ms = unit === 'h' ? n * 3600000 : unit === 'm' ? n * 60000 : n * 1000;
+        return new Date(Date.now() - ms).toISOString();
+      }
+
+      const eventsR = await run(
+        `kubectl get events ${ns} --sort-by='.lastTimestamp' -o json 2>/dev/null`,
+        { timeout: 15000 }
+      );
+      spinner?.stop();
+
+      if (!eventsR.stdout?.trim()) {
+        if (!opts.json) console.log(chalk.dim('  No events found.\n'));
+        else console.log(JSON.stringify({ events: [] }, null, 2));
+        return;
+      }
+
+      let allEvents = [];
+      try {
+        allEvents = JSON.parse(eventsR.stdout).items ?? [];
+      } catch {
+        console.error(chalk.red('  Failed to parse events output. Check: kubectl version / kubectl auth'));
+        process.exit(1);
+      }
+
+      // Filter by time window
+      const cutoff = sinceToDate(since);
+      if (cutoff) {
+        allEvents = allEvents.filter(e => {
+          const ts = e.lastTimestamp ?? e.metadata?.creationTimestamp;
+          return ts && new Date(ts) >= new Date(cutoff);
+        });
+      }
+
+      // Filter Warning-only if requested
+      if (opts.warningsOnly) {
+        allEvents = allEvents.filter(e => e.type === 'Warning');
+      }
+
+      // Sort: Warning first, then by lastTimestamp desc
+      allEvents.sort((a, b) => {
+        if (a.type !== b.type) return a.type === 'Warning' ? -1 : 1;
+        const ta = new Date(a.lastTimestamp ?? a.metadata?.creationTimestamp ?? 0);
+        const tb = new Date(b.lastTimestamp ?? b.metadata?.creationTimestamp ?? 0);
+        return tb - ta;
+      });
+
+      const events = allEvents.slice(0, topN);
+
+      // ── JSON output ──
+      if (opts.json) {
+        console.log(JSON.stringify({
+          namespace: opts.namespace ?? 'all',
+          since,
+          total: events.length,
+          warnings: events.filter(e => e.type === 'Warning').length,
+          events: events.map(e => ({
+            type: e.type,
+            reason: e.reason,
+            object: `${e.involvedObject?.kind}/${e.involvedObject?.name}`,
+            namespace: e.metadata?.namespace,
+            message: e.message,
+            count: e.count ?? 1,
+            lastTimestamp: e.lastTimestamp,
+          })),
+        }, null, 2));
+        return;
+      }
+
+      // ── Terminal render ──
+      const div = '  ' + chalk.dim('─'.repeat(54));
+      const warnings = events.filter(e => e.type === 'Warning');
+      const normal   = events.filter(e => e.type !== 'Warning');
+
+      console.log('');
+      console.log(`  ${chalk.bold(`◈  EVENTS — ${nsLabel}  ·  last ${since}`)}`);
+      console.log(chalk.dim(`  ${warnings.length} warning(s), ${normal.length} normal  ·  showing top ${events.length}`));
+      console.log(div);
+
+      if (events.length === 0) {
+        console.log(chalk.green('\n  ✓ No events in this window.\n'));
+        return;
+      }
+
+      // Group by reason for deduplication display
+      const groups = {};
+      for (const e of events) {
+        const key = `${e.type}::${e.reason}::${e.involvedObject?.kind}/${e.involvedObject?.name}`;
+        if (!groups[key]) {
+          groups[key] = { ...e, _count: e.count ?? 1 };
+        } else {
+          groups[key]._count += e.count ?? 1;
+        }
+      }
+
+      for (const ev of Object.values(groups)) {
+        const isWarn  = ev.type === 'Warning';
+        const icon    = isWarn ? chalk.yellow('⚠') : chalk.dim('·');
+        const obj     = `${ev.involvedObject?.kind ?? '?'}/${ev.involvedObject?.name ?? '?'}`;
+        const ns2     = ev.metadata?.namespace ? chalk.dim(`[${ev.metadata.namespace}]`) : '';
+        const reason  = isWarn ? chalk.yellow(ev.reason ?? '') : chalk.dim(ev.reason ?? '');
+        const cnt     = ev._count > 1 ? chalk.dim(` ×${ev._count}`) : '';
+        const ts      = ev.lastTimestamp ? chalk.dim(new Date(ev.lastTimestamp).toLocaleTimeString()) : '';
+
+        console.log(`\n  ${icon}  ${chalk.white.bold(obj)} ${ns2}  ${reason}${cnt}  ${ts}`);
+        if (ev.message) {
+          const msg = ev.message.length > 120 ? ev.message.slice(0, 120) + '…' : ev.message;
+          console.log(`     ${chalk.hex('#94a3b8')(msg)}`);
+        }
+      }
+
+      console.log('\n' + div);
+
+      // ── Quick summary line ──
+      if (warnings.length === 0) {
+        console.log(chalk.green('\n  ✓ No warning events — cluster looks healthy.\n'));
+      } else {
+        console.log(`\n  ${chalk.yellow.bold(`${warnings.length} warning event(s) detected.`)}`);
+        console.log(chalk.dim('  Pipe to AI: kubectl get events --all-namespaces | nxs k8s debug --stdin\n'));
+      }
     });
 
   k8s

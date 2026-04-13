@@ -45,7 +45,7 @@ Examples:
       if (!await checkDeps('kubectl')) { process.exit(1); }
       if (!opts.json) printBanner('Kubernetes RBAC scanner');
 
-      const nsFlag = opts.namespace ? `-n ${opts.namespace}` : '--all-namespaces';
+      const nsFlag = opts.namespace ? `-n "${opts.namespace}"` : '--all-namespaces';
 
       // Fetch ClusterRoleBindings, RoleBindings, ClusterRoles, Roles in parallel
       if (!opts.json) console.log(chalk.dim('  Fetching RBAC resources from cluster...\n'));

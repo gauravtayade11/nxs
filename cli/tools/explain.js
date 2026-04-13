@@ -76,7 +76,7 @@ export function registerExplain(program) {
   program
     .command('explain <term...>')
     .description('Explain any DevOps term, error code, CVE, or K8s state in plain English')
-    .option('--no-chat', 'Skip follow-up chat')
+    .option('--chat', 'Enable follow-up chat after analysis')
     .option('-j, --json', 'Output as JSON')
     .addHelpText('after', `
 Examples:

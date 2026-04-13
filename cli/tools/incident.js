@@ -1,7 +1,7 @@
 /**
  * nxs incident — Full incident commander
  * Start, update, close incidents from the CLI.
- * Posts to Slack thread, tracks timeline, generates postmortem.
+ * Posts to Slack thread (bot token) or webhook, tracks timeline, generates postmortem.
  */
 import chalk from 'chalk';
 import { printBanner, hr } from '../core/ui.js';
@@ -25,7 +25,7 @@ Return a JSON object with exactly this structure:
   "timeline": "<key events in chronological order>",
   "impact": "<who was affected and for how long>",
   "fixSteps": "<what was done to resolve it>",
-  "prevention": "<action items to prevent recurrence — numbered list>",
+  "prevention": "<action items to prevent recurrence — numbered list as array of strings>",
   "commands": "<any key commands used during the incident>"
 }
 
@@ -45,15 +45,76 @@ function genId() {
   return `INC-${Date.now().toString(36).toUpperCase()}`;
 }
 
-async function postSlack(webhookUrl, blocks, color = '#e74c3c') {
-  if (!webhookUrl) return;
+// Convert AI output (string or array) to Slack bullet list
+function slackBullets(v) {
+  if (!v) return '_None_';
+  const items = Array.isArray(v)
+    ? v.map(String).filter(l => l.trim() && !/^\d+$/.test(l.trim()))
+    : String(v).split('\n').filter(l => l.trim());
+  if (items.length === 0) return '_None_';
+  return items.map(l => `• ${l.replace(/^\d+\.\s*/, '').trim()}`).join('\n');
+}
+
+// ── Slack helpers ─────────────────────────────────────────────────────────────
+// Mode 1: SLACK_BOT_TOKEN + SLACK_CHANNEL → chat.postMessage (supports threading)
+// Mode 2: SLACK_WEBHOOK_URL               → incoming webhook (no threading)
+
+async function postSlackApi(token, channel, blocks, color = '#e74c3c', threadTs = null) {
+  const body = { channel, attachments: [{ color, blocks }] };
+  if (threadTs) body.thread_ts = threadTs;
   try {
-    await fetch(webhookUrl, {
+    const res = await fetch('https://slack.com/api/chat.postMessage', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      console.error(chalk.red(`  ✗ Slack API error: ${data.error}`));
+      if (data.error === 'not_in_channel') console.error(chalk.dim('  → Invite bot: /invite @your-bot-name'));
+      if (data.error === 'channel_not_found') console.error(chalk.dim(`  → Channel "${channel}" not found — check SLACK_CHANNEL`));
+      if (data.error === 'invalid_auth') console.error(chalk.dim('  → Invalid SLACK_BOT_TOKEN — regenerate at api.slack.com'));
+      return null;
+    }
+    return data.ts;
+  } catch (e) {
+    console.error(chalk.red(`  ✗ Slack request failed: ${e.message}`));
+    return null;
+  }
+}
+
+async function postSlackWebhook(webhookUrl, blocks) {
+  try {
+    const res = await fetch(webhookUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ attachments: [{ color, blocks }] }),
+      body: JSON.stringify({ blocks }),
     });
-  } catch { /* ignore */ }
+    const text = await res.text();
+    if (!res.ok || text !== 'ok') {
+      console.error(chalk.red(`  ✗ Slack webhook error: ${text}`));
+      return null;
+    }
+    return 'webhook';
+  } catch (e) {
+    console.error(chalk.red(`  ✗ Slack webhook failed: ${e.message}`));
+    return null;
+  }
+}
+
+async function postSlack(blocks, color = '#e74c3c', threadTs = null) {
+  const token   = process.env.SLACK_BOT_TOKEN;
+  const channel = process.env.SLACK_CHANNEL;
+  const webhook = process.env.SLACK_WEBHOOK_URL;
+
+  if (token && channel) return await postSlackApi(token, channel, blocks, color, threadTs);
+  if (token && !channel) {
+    console.error(chalk.red('  ✗ SLACK_BOT_TOKEN set but SLACK_CHANNEL is missing'));
+    console.error(chalk.dim('  → Set it: export SLACK_CHANNEL="#incidents"  or  nxs config --set SLACK_CHANNEL=#incidents'));
+    return null;
+  }
+  if (webhook) return await postSlackWebhook(webhook, blocks);
+  return null;
 }
 
 function sevColor(sev) {
@@ -69,6 +130,12 @@ function formatDuration(ms) {
   const hours = Math.floor(mins / 60);
   if (hours > 0) return `${hours}h ${mins % 60}m`;
   return `${mins}m`;
+}
+
+// Normalize AI output to array of non-empty strings
+function toLines(v) {
+  if (Array.isArray(v)) return v.map(String).filter(l => l.trim() && !/^\d+$/.test(l.trim()));
+  return String(v).split('\n').filter(Boolean);
 }
 
 export function registerIncident(program) {
@@ -119,14 +186,26 @@ Examples:
       console.log(chalk.dim(`  nxs incident update ${id} --note "Root cause identified: ..."`));
       console.log(chalk.dim(`  nxs incident close  ${id} --resolution "Fixed by ..."\n`));
 
-      const webhookUrl = process.env.SLACK_WEBHOOK_URL;
-      if (opts.notify === 'slack' || webhookUrl) {
-        await postSlack(webhookUrl, [
-          { type: 'header', text: { type: 'plain_text', text: `${sevEmoji(opts.severity)} INCIDENT ${id}: ${opts.title}` } },
-          { type: 'section', text: { type: 'mrkdwn', text: `*Severity:* ${opts.severity.toUpperCase()}${opts.service ? `  |  *Service:* ${opts.service}` : ''}\n*Started:* ${new Date(now).toLocaleString()}` } },
-          { type: 'section', text: { type: 'mrkdwn', text: `*Status:* 🔴 OPEN\n\nUpdate via: \`nxs incident update ${id} --note "..."\`` } },
+      const shouldNotify = opts.notify === 'slack' || process.env.SLACK_BOT_TOKEN || process.env.SLACK_WEBHOOK_URL;
+      if (shouldNotify) {
+        const fields = [
+          `*Severity:*\n${opts.severity.toUpperCase()}`,
+          `*Status:*\n🔴 OPEN`,
+        ];
+        if (opts.service) fields.push(`*Service:*\n${opts.service}`);
+        const ts = await postSlack([
+          { type: 'header', text: { type: 'plain_text', text: `${sevEmoji(opts.severity)} INCIDENT DECLARED` } },
+          { type: 'section', text: { type: 'mrkdwn', text: `*${id}* — ${opts.title}` } },
+          { type: 'section', fields: fields.map(f => ({ type: 'mrkdwn', text: f })) },
+          { type: 'section', text: { type: 'mrkdwn', text: `*Started:* ${new Date(now).toLocaleString()}` } },
+          { type: 'divider' },
+          { type: 'context', elements: [{ type: 'mrkdwn', text: `Update: \`nxs incident update ${id} --note "..."\`  |  Close: \`nxs incident close ${id} --resolution "..."\`` }] },
         ]);
-        console.log(chalk.green('  ✓ Slack notified\n'));
+        if (ts) {
+          incident.slackThreadTs = ts;
+          saveIncidents(incidents);
+          console.log(chalk.green('  ✓ Slack notified\n'));
+        }
       }
     });
 
@@ -157,14 +236,17 @@ Examples:
       console.log(`  ${chalk.dim(new Date(now).toLocaleString())}  ${chalk.hex('#94a3b8')(opts.note)}\n`);
       console.log(hr() + '\n');
 
-      const webhookUrl = process.env.SLACK_WEBHOOK_URL;
-      if (opts.notify === 'slack' || webhookUrl) {
-        const duration = formatDuration(Date.now() - new Date(incident.startedAt).getTime());
-        await postSlack(webhookUrl, [
-          { type: 'section', text: { type: 'mrkdwn', text: `*${sevEmoji(incident.severity)} ${id}* — ${incident.title}` } },
-          { type: 'section', text: { type: 'mrkdwn', text: `*Update* (${duration} in): ${opts.note}` } },
-        ], '#f39c12');
-        console.log(chalk.green('  ✓ Slack notified\n'));
+      const shouldNotify = opts.notify === 'slack' || process.env.SLACK_BOT_TOKEN || process.env.SLACK_WEBHOOK_URL;
+      if (shouldNotify) {
+        const duration     = formatDuration(Date.now() - new Date(incident.startedAt).getTime());
+        const updateCount  = incident.updates.filter(u => u.type === 'update').length;
+        const ts = await postSlack([
+          { type: 'section', text: { type: 'mrkdwn', text: `*:pencil: Update #${updateCount} — ${id}*\n${incident.title}` } },
+          { type: 'divider' },
+          { type: 'section', text: { type: 'mrkdwn', text: opts.note } },
+          { type: 'context', elements: [{ type: 'mrkdwn', text: `Time into incident: *${duration}*  |  Severity: *${incident.severity.toUpperCase()}*` }] },
+        ], '#f39c12', incident.slackThreadTs);
+        if (ts) console.log(chalk.green('  ✓ Slack notified\n'));
       }
     });
 
@@ -182,7 +264,7 @@ Examples:
         process.exit(1);
       }
 
-      const now = new Date().toISOString();
+      const now      = new Date().toISOString();
       const duration = formatDuration(Date.now() - new Date(incident.startedAt).getTime());
       incident.status     = 'closed';
       incident.closedAt   = now;
@@ -199,15 +281,20 @@ Examples:
       console.log(hr());
       console.log(chalk.dim(`\n  Generate postmortem: nxs incident postmortem ${id}\n`));
 
-      const webhookUrl = process.env.SLACK_WEBHOOK_URL;
-      if (opts.notify === 'slack' || webhookUrl) {
-        await postSlack(webhookUrl, [
-          { type: 'header', text: { type: 'plain_text', text: `✅ RESOLVED ${id}: ${incident.title}` } },
-          { type: 'section', text: { type: 'mrkdwn', text: `*Duration:* ${duration}  |  *Severity:* ${incident.severity.toUpperCase()}` } },
-          { type: 'section', text: { type: 'mrkdwn', text: `*Resolution:* ${opts.resolution}` } },
-          { type: 'context', elements: [{ type: 'mrkdwn', text: `Postmortem: \`nxs incident postmortem ${id}\`` }] },
-        ], '#2ecc71');
-        console.log(chalk.green('  ✓ Slack notified\n'));
+      const shouldNotify = opts.notify === 'slack' || process.env.SLACK_BOT_TOKEN || process.env.SLACK_WEBHOOK_URL;
+      if (shouldNotify) {
+        const ts = await postSlack([
+          { type: 'header', text: { type: 'plain_text', text: `✅ INCIDENT RESOLVED` } },
+          { type: 'section', text: { type: 'mrkdwn', text: `*${id}* — ${incident.title}` } },
+          { type: 'section', fields: [
+            { type: 'mrkdwn', text: `*Duration:*\n${duration}` },
+            { type: 'mrkdwn', text: `*Severity:*\n${incident.severity.toUpperCase()}` },
+          ]},
+          { type: 'divider' },
+          { type: 'section', text: { type: 'mrkdwn', text: `*:white_check_mark: Resolution*\n${opts.resolution}` } },
+          { type: 'context', elements: [{ type: 'mrkdwn', text: `Run postmortem: \`nxs incident postmortem ${id}\`` }] },
+        ], '#2ecc71', incident.slackThreadTs);
+        if (ts) console.log(chalk.green('  ✓ Slack notified\n'));
       }
     });
 
@@ -307,7 +394,7 @@ Examples:
         timeline: incident.updates.map((u) => `${u.ts}: ${u.note}`).join('\n'),
         impact: 'Unknown — add AI key for full analysis',
         fixSteps: incident.resolution ?? 'Not resolved yet',
-        prevention: '1. Add AI key for automated postmortem generation.\n2. Review incident timeline manually.',
+        prevention: ['Add AI key for automated postmortem generation.', 'Review incident timeline manually.'],
         commands: '',
       }));
 
@@ -319,15 +406,15 @@ Examples:
 
       if (result.rootCause) {
         console.log(chalk.bold('  Root cause:\n'));
-        result.rootCause.split('\n').forEach((l) => console.log(`  ${chalk.hex('#94a3b8')(l)}`));
+        toLines(result.rootCause).forEach((l) => console.log(`  ${chalk.hex('#94a3b8')(l)}`));
       }
       if (result.impact) {
         console.log(chalk.bold('\n  Impact:\n'));
-        console.log(`  ${chalk.hex('#94a3b8')(result.impact)}`);
+        toLines(result.impact).forEach((l) => console.log(`  ${chalk.hex('#94a3b8')(l)}`));
       }
       if (result.prevention) {
         console.log(chalk.bold('\n  Prevention action items:\n'));
-        result.prevention.split('\n').forEach((l) => console.log(`  ${chalk.hex('#94a3b8')(l)}`));
+        toLines(result.prevention).forEach((l) => console.log(`  ${chalk.hex('#94a3b8')(l)}`));
       }
       console.log('\n' + hr());
 
@@ -340,33 +427,37 @@ Examples:
           result.summary,
           '',
           `## Root Cause`,
-          result.rootCause,
+          toLines(result.rootCause).join('\n'),
           '',
           `## Timeline`,
           result.timeline ?? incident.updates.map((u) => `- ${u.ts}: ${u.note}`).join('\n'),
           '',
           `## Impact`,
-          result.impact,
+          toLines(result.impact).join('\n'),
           '',
           `## Resolution`,
           incident.resolution ?? 'N/A',
           '',
           `## Prevention`,
-          result.prevention,
+          toLines(result.prevention).map((l, i) => `${i + 1}. ${l}`).join('\n'),
         ].join('\n');
         writeFileSync(opts.output, md, 'utf8');
         console.log(chalk.green(`\n  ✓ Postmortem saved to ${opts.output}\n`));
       }
 
-      const webhookUrl = process.env.SLACK_WEBHOOK_URL;
-      if (opts.notify === 'slack' && webhookUrl) {
-        await postSlack(webhookUrl, [
+      const shouldNotify = opts.notify === 'slack' || process.env.SLACK_BOT_TOKEN || process.env.SLACK_WEBHOOK_URL;
+      if (shouldNotify) {
+        const rootCauseText = toLines(result.rootCause).join('\n');
+        const ts = await postSlack([
           { type: 'header', text: { type: 'plain_text', text: `📋 Postmortem: ${incident.id}` } },
-          { type: 'section', text: { type: 'mrkdwn', text: `*${incident.title}*\n${result.summary}` } },
-          { type: 'section', text: { type: 'mrkdwn', text: `*Root cause:* ${(result.rootCause ?? '').slice(0, 200)}` } },
-          { type: 'section', text: { type: 'mrkdwn', text: `*Prevention:*\n${(result.prevention ?? '').slice(0, 300)}` } },
-        ], '#3498db');
-        console.log(chalk.green('  ✓ Posted to Slack\n'));
+          { type: 'section', text: { type: 'mrkdwn', text: `*${incident.title}*\n\n${result.summary}` } },
+          { type: 'divider' },
+          { type: 'section', text: { type: 'mrkdwn', text: `:mag: *Root cause*\n${rootCauseText.slice(0, 300)}` } },
+          { type: 'divider' },
+          { type: 'section', text: { type: 'mrkdwn', text: `:shield: *Prevention action items*\n${slackBullets(result.prevention).slice(0, 600)}` } },
+          { type: 'context', elements: [{ type: 'mrkdwn', text: `Severity: *${incident.severity.toUpperCase()}*  |  Duration: *${formatDuration(new Date(incident.closedAt ?? Date.now()).getTime() - new Date(incident.startedAt).getTime())}*` }] },
+        ], '#3498db', incident.slackThreadTs);
+        if (ts) console.log(chalk.green('  ✓ Posted to Slack\n'));
       }
     });
 }

@@ -45,7 +45,7 @@ function sectionHeader(title, icon) {
 // ── Kubernetes ─────────────────────────────────────────────────────────────
 
 export async function fetchK8sStatus(namespace = null) {
-  const ns = namespace ? `-n ${namespace}` : '--all-namespaces';
+  const ns = namespace ? `-n "${namespace}"` : '--all-namespaces';
 
   const [nodesR, podsR, deploymentsR, eventsR] = await Promise.all([
     run('kubectl get nodes -o wide 2>/dev/null'),
@@ -54,8 +54,8 @@ export async function fetchK8sStatus(namespace = null) {
     run(`kubectl get events ${ns} --field-selector type=Warning --sort-by='.metadata.creationTimestamp' 2>/dev/null`),
   ]);
 
-  const pods        = nodesR.ok    ? parseTable(podsR.stdout)        : [];
-  const nodes       = nodesR.ok    ? parseTable(nodesR.stdout)       : [];
+  const pods        = podsR.ok        ? parseTable(podsR.stdout)        : [];
+  const nodes       = nodesR.ok       ? parseTable(nodesR.stdout)       : [];
   const deployments = deploymentsR.ok ? parseTable(deploymentsR.stdout) : [];
   const events      = eventsR.ok   ? eventsR.stdout.split('\n').slice(1, 6) : [];
 
@@ -405,7 +405,7 @@ Examples:
 
       const print = async () => {
         const spin = ora({ text: 'Fetching pods...', color: 'cyan' }).start();
-        const ns = opts.namespace ? `-n ${opts.namespace}` : '--all-namespaces';
+        const ns = opts.namespace ? `-n "${opts.namespace}"` : '--all-namespaces';
         const r  = await run(`kubectl get pods ${ns} 2>/dev/null`);
         spin.stop();
 
@@ -459,9 +459,13 @@ Examples:
       if (opts.watch) {
         console.log(chalk.dim('  Refreshing every 5s — Ctrl+C to stop\n'));
         setInterval(async () => {
-          process.stdout.write('\x1Bc'); // clear terminal
-          printBanner('Kubernetes pod status');
-          await print();
+          try {
+            process.stdout.write('\x1Bc'); // clear terminal
+            printBanner('Kubernetes pod status');
+            await print();
+          } catch (err) {
+            console.error(chalk.yellow(`  ⚠ Refresh error: ${err.message}`));
+          }
         }, 5000);
       }
     });
@@ -491,9 +495,13 @@ Requirements:
       if (opts.watch) {
         console.log(chalk.dim('  Refreshing every 30s — Ctrl+C to stop\n'));
         setInterval(async () => {
-          process.stdout.write('\x1Bc');
-          printBanner('GitHub Actions pipeline status');
-          await print();
+          try {
+            process.stdout.write('\x1Bc');
+            printBanner('GitHub Actions pipeline status');
+            await print();
+          } catch (err) {
+            console.error(chalk.yellow(`  ⚠ Refresh error: ${err.message}`));
+          }
         }, 30000);
       }
     });

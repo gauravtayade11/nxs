@@ -1,3 +1,6 @@
+# MkDocs build output
+site/
+
 # Logs
 logs
 *.log
@@ -15,6 +18,7 @@ node_modules
 dist
 dist-ssr
 *.local
+coverage/
 .env
 .env.*
 !.env.example
@@ -33,6 +37,10 @@ dist-ssr
 # Internal docs
 DEMO.md
 DOCS.md
+VIDEO_DEMO.md
+CODE_REVIEW.md
+MANUAL_DEMO.md
+TECHNICAL_GUIDE.md
 
 # Content drafts (local only)
 content/

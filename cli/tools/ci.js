@@ -35,6 +35,8 @@ Detection patterns:
 
 Always identify: which step/job failed, what command, what error code, what the fix is.
 
+IMPORTANT: This is a CI/CD build log — NOT a Kubernetes or infrastructure log. The "commands" field must only contain CI-relevant commands (npm, yarn, docker build, git, gh CLI, pipeline YAML edits). Never suggest kubectl, Helm, or cluster commands unless the log explicitly shows a Kubernetes deployment step failing.
+
 Return ONLY valid JSON. No markdown fences.`;
 
 const MOCK = {
@@ -147,21 +149,66 @@ export function registerCi(program) {
     .option('-s, --stdin', 'Read from stdin')
     .option('-i, --interactive', 'Paste log interactively')
     .option('--run <id>', 'Fetch a GitHub Actions run by ID (requires gh CLI)')
-    .option('--no-chat', 'Skip follow-up chat')
+    .option('--latest', 'Auto-fetch the most recent failed GitHub Actions run (requires gh CLI)')
+    .option('--chat', 'Enable follow-up chat after analysis')
     .option('--redact', 'Scrub secrets before sending to AI')
     .option('-o, --output <file>', 'Save analysis to markdown file')
     .option('--fail-on <severity>', 'Exit code 1 if severity matches (critical|warning)')
     .option('--notify <target>', 'Notify after analysis: slack')
+    .option('--fast', 'Rules engine only — no AI call (instant, offline)')
     .option('-j, --json', 'Output as JSON')
     .addHelpText('after', `
 Examples:
   $ nxs ci analyze build.log
   $ gh run view 12345 --log-failed | nxs ci analyze --stdin
   $ nxs ci analyze --run 12345          # auto-fetch via gh CLI
+  $ nxs ci analyze --latest             # auto-fetch most recent failed run
   $ nxs ci analyze --stdin --fail-on critical
   $ cat .github/workflows/*.log | nxs ci analyze --stdin`)
     .action(async (file, opts) => {
       if (!opts.json) printBanner('CI/CD failure analyzer');
+
+      // --latest: find most recent failed run and fetch its logs
+      if (opts.latest) {
+        const hasGh = await hasBin('gh');
+        if (!hasGh) {
+          console.error(chalk.red('  gh CLI not found. Install: https://cli.github.com/'));
+          process.exit(1);
+        }
+        if (!opts.json) console.log(chalk.dim('  Finding most recent failed run…\n'));
+
+        const { stdout: listOut, ok: listOk } = await run(
+          'gh run list --json databaseId,status,conclusion,name,headBranch,createdAt --limit 20 2>/dev/null',
+          { timeout: 30000 }
+        );
+        if (!listOk || !listOut.trim()) {
+          console.error(chalk.red('  Could not list runs. Check: gh auth status'));
+          process.exit(1);
+        }
+
+        let runs = [];
+        try { runs = JSON.parse(listOut); } catch {
+          console.error(chalk.red('  Failed to parse run list. Check: gh version / gh auth status'));
+          process.exit(1);
+        }
+
+        const failed = runs.find(r =>
+          r.conclusion === 'failure' || r.conclusion === 'timed_out' ||
+          (r.status === 'completed' && r.conclusion !== 'success')
+        );
+
+        if (!failed) {
+          console.log(chalk.green('  No recent failed runs found.\n'));
+          process.exit(0);
+        }
+
+        if (!opts.json) {
+          console.log(chalk.dim(`  Most recent failure: ${chalk.white(failed.name)} — run ${chalk.white(failed.databaseId)}`));
+          console.log(chalk.dim(`  Branch: ${failed.headBranch}  |  ${new Date(failed.createdAt).toLocaleString()}\n`));
+        }
+
+        opts.run = String(failed.databaseId);
+      }
 
       // --run <id>: fetch GitHub Actions run log via gh CLI
       if (opts.run) {
@@ -175,12 +222,12 @@ Examples:
 
         // Try failed-only log first; fall back to full log for passing runs
         let logOutput = '';
-        const { stdout: failedLog, ok } = await run(`gh run view ${opts.run} --log-failed 2>/dev/null`, { timeout: 30000 });
+        const { stdout: failedLog, ok } = await run(`gh run view "${opts.run}" --log-failed 2>/dev/null`, { timeout: 30000 });
         if (ok && failedLog.trim()) {
           logOutput = failedLog;
         } else {
           // Run may have passed — fetch full log (first 500 lines)
-          const { stdout: fullLog, ok: fullOk } = await run(`gh run view ${opts.run} --log 2>/dev/null`, { timeout: 30000 });
+          const { stdout: fullLog, ok: fullOk } = await run(`gh run view "${opts.run}" --log 2>/dev/null`, { timeout: 30000 });
           if (!fullOk || !fullLog.trim()) {
             console.error(chalk.red(`  Could not fetch run ${opts.run}. Check the run ID and gh auth.`));
             console.error(chalk.dim('  Run: gh auth status'));
@@ -203,7 +250,7 @@ Examples:
     .option('--clear', 'Clear ci history')
     .option('-j, --json', 'Output as JSON')
     .action(async (opts) => {
-      printBanner('CI/CD failure analyzer');
+      if (!opts.json) printBanner('CI/CD failure analyzer');
       await runHistory('ci', opts);
     });
 }

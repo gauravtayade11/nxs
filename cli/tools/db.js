@@ -118,7 +118,8 @@ export function registerDb(program) {
     .option('-s, --stdin', 'Read from stdin')
     .option('-i, --interactive', 'Paste error interactively')
     .option('-j, --json', 'Output as JSON')
-    .option('--no-chat', 'Skip follow-up chat')
+    .option('--fast', 'Rules engine only — no AI call (instant, offline)')
+    .option('--chat', 'Enable follow-up chat after analysis')
     .option('--redact', 'Scrub secrets/passwords before sending to AI')
     .option('-o, --output <file>', 'Save analysis to a markdown file')
     .option('--fail-on <severity>', 'Exit code 1 if severity matches (critical|warning)')
@@ -159,7 +160,7 @@ Examples:
         process.exit(1);
       }
 
-      const ns        = opts.namespace ? `-n ${opts.namespace}` : '';
+      const ns        = opts.namespace ? `-n "${opts.namespace}"` : '';
       const threshold = Number.parseInt(opts.threshold, 10);
       const idleAfter = Number.parseInt(opts.idleAfter, 10);
       const interval  = Number.parseInt(opts.interval, 10) * 1000;
@@ -168,11 +169,11 @@ Examples:
       const psql = async (sql) => {
         if (opts.pod) {
           const { stdout, stderr } = await run(
-            `kubectl exec ${opts.pod} ${ns} -- psql -U postgres -t -c "${sql.replace(/"/g, '\\"')}" 2>/dev/null`
+            `kubectl exec "${opts.pod}" ${ns} -- psql -U postgres -t -c "${sql.replaceAll('"', '\\"')}" 2>/dev/null`
           );
           return (stdout || stderr || '').trim();
         }
-        const { stdout, stderr } = await run(`psql "${opts.url}" -t -c "${sql.replace(/"/g, '\\"')}" 2>/dev/null`);
+        const { stdout, stderr } = await run(`psql "${opts.url}" -t -c "${sql.replaceAll('"', '\\"')}" 2>/dev/null`);
         return (stdout || stderr || '').trim();
       };
 
@@ -313,7 +314,7 @@ Examples:
     .option('--clear', 'Clear db history')
     .option('-j, --json', 'Output as JSON')
     .action(async (opts) => {
-      printBanner('Database error analyzer');
+      if (!opts.json) printBanner('Database error analyzer');
       await runHistory('db', opts);
     });
 

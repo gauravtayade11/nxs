@@ -70,7 +70,8 @@ export function registerCloud(program) {
     .option('-s, --stdin', 'Read from stdin')
     .option('-i, --interactive', 'Paste error interactively')
     .option('-j, --json', 'Output as JSON')
-    .option('--no-chat', 'Skip follow-up chat')
+    .option('--fast', 'Rules engine only — no AI call (instant, offline)')
+    .option('--chat', 'Enable follow-up chat after analysis')
     .option('--redact', 'Scrub secrets/tokens from log before sending to AI')
     .option('-o, --output <file>', 'Save analysis to a markdown file')
     .option('--fail-on <severity>', 'Exit code 1 if severity matches (critical|warning)')
@@ -92,7 +93,7 @@ Examples:
     .option('--clear', 'Clear cloud history')
     .option('-j, --json', 'Output as JSON')
     .action(async (opts) => {
-      printBanner('AWS · GCP · Azure cloud debugger');
+      if (!opts.json) printBanner('AWS · GCP · Azure cloud debugger');
       await runHistory('cloud', opts);
     });
 

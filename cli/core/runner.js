@@ -8,9 +8,53 @@ import { resolve }                  from 'node:path';
 import chalk                        from 'chalk';
 import ora                          from 'ora';
 import { analyze, chat }            from './ai.js';
-import { addHistory }               from './config.js';
+import { addHistory, getPatternFrequency } from './config.js';
 import { printResult, readStdin, prompt } from './ui.js';
 import { redact, warnIfSensitive }  from './redact.js';
+
+function substituteContext(result, opts) {
+  const pod  = opts.pod        || null;
+  const ns   = opts.namespace  || null;
+  const dep  = opts.deployment || null;
+
+  if (!pod && !ns && !dep) return;
+
+  // kubectl command to look up the image when we don't know it
+  const imageCmd = dep && ns
+    ? `$(kubectl get deploy ${dep} -n ${ns} -o jsonpath='{.spec.template.spec.containers[0].image}')`
+    : dep
+      ? `$(kubectl get deploy ${dep} -o jsonpath='{.spec.template.spec.containers[0].image}')`
+      : pod && ns
+        ? `$(kubectl get pod ${pod} -n ${ns} -o jsonpath='{.spec.containers[0].image}')`
+        : '<image>';
+
+  const subst = (str) => {
+    if (typeof str !== 'string') return str;
+    if (pod)  str = str.replace(/<pod(-name)?>/g, pod);
+    if (ns)   str = str.replace(/<namespace>/g,   ns);
+    if (dep)  str = str.replace(/<(deployment(-name)?|name)>/g, dep);
+    str = str.replace(/<image(:[^>]*)?>/g, imageCmd);
+    // kubectl commands without explicit -n: insert -n before any pipe or end of line.
+    // Done line-by-line with indexOf to avoid ReDoS from backtracking quantifiers.
+    if (ns) {
+      const kubectlCmdRe = /kubectl (?:logs|describe pod|get pod|top pod|exec)\b/;
+      str = str.split('\n').map((line) => {
+        const match = kubectlCmdRe.exec(line);
+        if (!match) return line;
+        const pipeIdx = line.indexOf('|', match.index);
+        const cmdPart = pipeIdx === -1 ? line.slice(match.index) : line.slice(match.index, pipeIdx);
+        if (cmdPart.includes('-n ')) return line;
+        if (pipeIdx === -1) return `${line} -n ${ns}`;
+        return `${line.slice(0, pipeIdx).trimEnd()} -n ${ns} | ${line.slice(pipeIdx + 1).trimStart()}`;
+      }).join('\n');
+    }
+    return str;
+  };
+
+  for (const field of ['commands', 'fixSteps', 'rootCause', 'summary']) {
+    if (result[field]) result[field] = subst(result[field]);
+  }
+}
 
 export async function runAnalyze(toolModule, systemPrompt, mockFn, file, opts) {
   let logText = '';
@@ -22,7 +66,12 @@ export async function runAnalyze(toolModule, systemPrompt, mockFn, file, opts) {
   } else if (opts.stdin || (!process.stdin.isTTY && !opts.interactive && !file)) {
     logText = await readStdin();
     if (!logText.trim()) { console.error(chalk.red('  No input from stdin.')); process.exit(1); }
-    if (!opts.json) console.log(chalk.dim(`  Input: stdin (${logText.length} chars)\n`));
+    if (!opts.json) {
+      console.log(chalk.dim(`  Input: stdin (${logText.length} chars)\n`));
+      if (logText.length < 200 && toolModule === 'k8s') {
+        console.log(chalk.dim('  Tip: for richer analysis with exact pod names, use --pod <name> -n <namespace>\n'));
+      }
+    }
 
   } else if (opts.interactive) {
     console.log(chalk.dim('  Paste your log. Type END on a new line when done:\n'));
@@ -72,7 +121,7 @@ export async function runAnalyze(toolModule, systemPrompt, mockFn, file, opts) {
   }
 
   if (opts.json) {
-    const result = await analyze(logText, systemPrompt, mockFn);
+    const result = await analyze(logText, systemPrompt, mockFn, { fast: !!opts.fast });
     console.log(JSON.stringify(result, null, 2));
     // --notify still runs in JSON mode (e.g. CI workflows)
     if (opts.notify === 'slack') {
@@ -88,10 +137,16 @@ export async function runAnalyze(toolModule, systemPrompt, mockFn, file, opts) {
   const onSigint = () => { spinner.stop(); console.log('\n' + chalk.dim('  Interrupted.\n')); process.exit(0); };
   process.once('SIGINT', onSigint);
 
+  if (opts.fast && !opts.json) {
+    console.log(chalk.dim('  ⚡ Fast mode — using rule engine only (no AI)\n'));
+  }
+
   let result;
   try {
-    result = await analyze(logText, systemPrompt, mockFn);
-    spinner.succeed(chalk.green('Analysis complete'));
+    result = await analyze(logText, systemPrompt, mockFn, { fast: !!opts.fast });
+    const via = result.via === 'rules' ? chalk.cyan('rules engine') : result.via === 'ai-groq' ? chalk.green('Groq AI') : result.via === 'ai-anthropic' ? chalk.magenta('Claude AI') : chalk.dim('demo');
+    const cacheHit = result._cached ? chalk.dim('  ⚡ cached') : '';
+    spinner.succeed(chalk.green('Analysis complete') + chalk.dim(`  via ${via}`) + cacheHit);
   } catch (err) {
     spinner.fail(chalk.red(`Analysis failed: ${err.message}`));
     if (err.message?.includes('ENOTFOUND') || err.message?.includes('fetch failed')) {
@@ -104,8 +159,24 @@ export async function runAnalyze(toolModule, systemPrompt, mockFn, file, opts) {
   }
   process.off('SIGINT', onSigint);
 
-  addHistory(toolModule, logText, result);
-  printResult(result);
+  // Substitute known values into rule-engine placeholders
+  substituteContext(result, opts);
+
+  const { _cached, ...resultForHistory } = result;
+  addHistory(toolModule, logText, resultForHistory);
+
+  // Pattern frequency — look back 7 days
+  const errorTag = result.via === 'rules' && result.id
+    ? result.id
+    : `${result.tool ?? toolModule}:${result.severity ?? 'info'}`;
+  const freq = getPatternFrequency(errorTag, 7);
+
+  printResult(result, freq);
+
+  // AI disclaimer — shown for non-deterministic results only (not cached — those are already stable)
+  if ((result.via === 'ai-groq' || result.via === 'ai-anthropic') && !result._cached) {
+    console.log(chalk.dim('  ℹ  AI-generated — responses may vary. Verify all commands before running in production.\n'));
+  }
 
   // --notify slack: post result to Slack webhook
   if (opts.notify === 'slack') {
@@ -145,7 +216,7 @@ export async function runAnalyze(toolModule, systemPrompt, mockFn, file, opts) {
     process.exit(1);
   }
 
-  if (opts.chat !== false) {
+  if (opts.chat === true) {
     await runChatLoop(logText, result);
   }
 
@@ -188,34 +259,79 @@ export async function runHistory(toolModule, opts) {
   console.log('\n' + hr() + '\n');
 }
 
+function toSlackBullets(v) {
+  if (!v) return '_None_';
+  const items = Array.isArray(v)
+    ? v.map(String).filter(l => l.trim() && !/^\d+$/.test(l.trim()))
+    : String(v).split('\n').filter(l => l.trim());
+  return items.length ? items.map(l => `• ${l.replace(/^\d+\.\s*/, '').trim()}`).join('\n') : '_None_';
+}
+
+function toSlackText(v) {
+  if (!v) return '_None_';
+  if (Array.isArray(v)) return v.map(String).filter(l => l.trim() && !/^\d+$/.test(l.trim())).join('\n');
+  return String(v);
+}
+
+function getViaLabel(via) {
+  if (via === 'rules')        return 'rules engine';
+  if (via === 'ai-groq')      return 'Groq AI';
+  if (via === 'ai-anthropic') return 'Claude AI';
+  return 'demo';
+}
+
+function buildConfidenceText(confidence) {
+  if (confidence == null) return '';
+  const conf   = Math.round(confidence);
+  const filled = Math.round(conf / 10);
+  const bar    = `${'█'.repeat(filled)}${'░'.repeat(10 - filled)} ${conf}%`;
+  return `\n:bar_chart: *Confidence:* \`${bar}\``;
+}
+
+function buildOptionalBlocks(cmdText, suggestions, isMock) {
+  const blocks = [];
+  if (cmdText)     blocks.push({ type: 'section', text: { type: 'mrkdwn', text: `:terminal: *Commands*\n${cmdText.slice(0, 400)}` } });
+  if (suggestions) blocks.push({ type: 'section', text: { type: 'mrkdwn', text: `:rocket: *Suggestions*\n${suggestions}` } });
+  if (isMock)      blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: '⚠ Demo mode — add GROQ_API_KEY for real AI diagnosis' }] });
+  return blocks;
+}
+
 async function notifySlack(result, toolModule, webhookUrl) {
-  const sev = result.severity ?? 'unknown';
+  const sev      = result.severity ?? 'unknown';
   const sevEmoji = { critical: '🔴', warning: '🟡', info: '🟢' }[sev] ?? '⚪';
   const sevColor = { critical: '#e74c3c', warning: '#f39c12', info: '#2ecc71' }[sev] ?? '#95a5a6';
 
-  const body = {
-    attachments: [{
-      color: sevColor,
-      blocks: [
-        { type: 'header', text: { type: 'plain_text', text: `${sevEmoji} nxs ${toolModule.toUpperCase()} — ${sev.toUpperCase()}` } },
-        { type: 'section', text: { type: 'mrkdwn', text: `*Summary*\n${String(result.summary ?? '').slice(0, 500)}` } },
-        { type: 'section', text: { type: 'mrkdwn', text: `*Root Cause*\n${String(result.rootCause ?? '').slice(0, 500)}` } },
-        ...(result.commands ? [{
-          type: 'section',
-          text: { type: 'mrkdwn', text: `*Fix Commands*\n\`\`\`${String(result.commands).slice(0, 400)}\`\`\`` },
-        }] : []),
-        ...(result._mock ? [{ type: 'context', elements: [{ type: 'mrkdwn', text: `⚠ No AI key — showing extracted log details. Add GROQ_API_KEY for full diagnosis.` }] }] : []),
-        { type: 'context', elements: [{ type: 'mrkdwn', text: `nxs CLI · ${new Date().toISOString()}` }] },
-      ],
-    }],
-  };
+  const pipeline  = result.pipeline ? `  |  Pipeline: *${result.pipeline}*` : '';
+  const step      = result.step     ? `  |  Step: *${result.step}*`         : '';
+  const confText  = buildConfidenceText(result.confidence);
+  const via       = getViaLabel(result.via);
+
+  const fixText   = toSlackBullets(result.fixSteps ?? result.commands);
+  const cmdText   = result.commands && result.commands !== result.fixSteps
+    ? toSlackText(result.commands).split('\n').map(l => `\`${l.trim()}\``).filter(Boolean).join('\n')
+    : null;
+
+  const impactText   = result.impact ? `\n\n:zap: *Impact*\n${toSlackText(result.impact).slice(0, 400)}` : '';
+  const suggestions  = result.suggestions?.length > 0 ? toSlackBullets(result.suggestions).slice(0, 400) : null;
+
+  const blocks = [
+    { type: 'header',  text: { type: 'plain_text', text: `${sevEmoji} ${(result.tool ?? toolModule ?? 'nxs').toUpperCase()} — ${sev.toUpperCase()}` } },
+    { type: 'section', text: { type: 'mrkdwn', text: `*${toSlackText(result.summary).slice(0, 300)}*${pipeline}${step}${confText}` } },
+    { type: 'divider' },
+    { type: 'section', text: { type: 'mrkdwn', text: `:mag: *Root cause*\n${toSlackText(result.rootCause).slice(0, 500)}${impactText}` } },
+    { type: 'divider' },
+    { type: 'section', text: { type: 'mrkdwn', text: `:wrench: *How to fix*\n${fixText.slice(0, 600)}` } },
+    ...buildOptionalBlocks(cmdText, suggestions, result._mock),
+    { type: 'context', elements: [{ type: 'mrkdwn', text: `nxs · ${via} · ${new Date().toISOString()}` }] },
+  ];
 
   const resp = await fetch(webhookUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ attachments: [{ color: sevColor, blocks }] }),
   });
-  if (!resp.ok) throw new Error(`Slack HTTP ${resp.status}`);
+  const text = await resp.text();
+  if (!resp.ok) throw new Error(`Slack error ${resp.status}: ${text.slice(0, 120)}`);
 }
 
 function buildMarkdown(result, logText) {
@@ -225,17 +341,20 @@ function buildMarkdown(result, logText) {
     if (Array.isArray(v)) return v.filter((x) => x && typeof x !== 'number').map((x, i) => `${i + 1}. ${x}`).join('\n');
     return String(v ?? '');
   };
+  const conf = result.confidence != null ? ` | **Confidence:** ${result.confidence}%` : '';
+  const via  = result.via ? ` | **Via:** ${result.via}` : '';
+
   return `# nxs Analysis — ${(result.tool ?? 'unknown').toUpperCase()}
 
 **Date:** ${ts}
-**Severity:** ${result.severity ?? 'unknown'}
+**Severity:** ${result.severity ?? 'unknown'}${conf}${via}
 ${result.resource ? `**Resource:** ${result.resource}  ` : ''}
 ${result.namespace && result.namespace !== 'unknown' ? `**Namespace:** ${result.namespace}  ` : ''}
 
 ## Summary
 
 ${toMd(result.summary)}
-
+${result.impact ? `\n## Impact\n\n${toMd(result.impact)}\n` : ''}
 ## Root Cause
 
 ${toMd(result.rootCause)}
@@ -249,7 +368,7 @@ ${toMd(result.fixSteps)}
 \`\`\`bash
 ${toMd(result.commands)}
 \`\`\`
-
+${result.suggestions?.length > 0 ? `\n## Suggestions\n\n${(Array.isArray(result.suggestions) ? result.suggestions : [result.suggestions]).map((s, i) => `${i + 1}. ${s}`).join('\n')}\n` : ''}
 ## Log Input (excerpt)
 
 \`\`\`

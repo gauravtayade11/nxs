@@ -24,6 +24,12 @@ Tool detection:
 - ci: GitHub Actions, Jenkins, GitLab CI, CircleCI, npm/pip install in pipeline
 - unknown: anything else
 
+CRITICAL RULE for "commands" field: Match commands strictly to the detected tool:
+- docker: ONLY docker, docker-compose, Dockerfile edits. FORBIDDEN: kubectl, helm, terraform
+- terraform: ONLY terraform CLI. FORBIDDEN: kubectl, helm, docker
+- ci: ONLY npm/yarn/pip, git, gh CLI, pipeline YAML edits. FORBIDDEN: kubectl, helm
+- Do NOT include kubectl or helm UNLESS the log contains explicit Kubernetes resource errors (e.g. "kubectl apply failed", "deployment.apps/...").
+
 Return ONLY valid JSON. No markdown fences.`;
 
 const MOCK = {
@@ -69,11 +75,12 @@ export function registerDevops(program) {
     .option('-s, --stdin', 'Read from stdin')
     .option('-i, --interactive', 'Paste log interactively')
     .option('-j, --json', 'Output as JSON')
-    .option('--no-chat', 'Skip follow-up chat')
+    .option('--chat', 'Enable follow-up chat after analysis')
     .option('--redact', 'Scrub secrets/tokens from log before sending to AI')
     .option('-o, --output <file>', 'Save analysis to a markdown file')
     .option('--fail-on <severity>', 'Exit code 1 if severity matches (critical|warning)')
     .option('--notify <target>', 'Notify after analysis: slack')
+    .option('--fast', 'Rules engine only — no AI call (instant, offline)')
     .addHelpText('after', `
 Examples:
   $ nxs devops analyze build.log
@@ -92,21 +99,21 @@ Examples:
     .option('--clear', 'Clear DevOps history')
     .option('-j, --json', 'Output as JSON')
     .action(async (opts) => {
-      printBanner('CI/CD · Docker · Terraform debugger');
+      if (!opts.json) printBanner('CI/CD · Docker · Terraform debugger');
       await runHistory('devops', opts);
     });
 
   devops
     .command('watch <file>')
     .description('Tail a live log file and auto-analyze when errors appear')
-    .option('--no-chat', 'Skip follow-up chat after each analysis')
+    .option('--chat', 'Enable follow-up chat after each analysis')
     .option('--redact', 'Scrub secrets before sending to AI')
     .option('-o, --output <file>', 'Append each analysis to a markdown file')
     .option('--fail-on <severity>', 'Exit code 1 on first match of severity')
     .addHelpText('after', `
 Examples:
   $ nxs devops watch /var/log/app.log
-  $ nxs devops watch pipeline.log --no-chat
+  $ nxs devops watch pipeline.log --chat
   $ nxs devops watch deploy.log --fail-on critical`)
     .action(async (file, opts) => {
       printBanner('CI/CD · Docker · Terraform debugger');
@@ -135,22 +142,26 @@ Examples:
       };
 
       setInterval(async () => {
-        const currentSize = statSync(file).size;
-        if (currentSize <= lastSize) return;
+        try {
+          const currentSize = statSync(file).size;
+          if (currentSize <= lastSize) return;
 
-        const newBytes = readFileSync(file).slice(lastSize);
-        lastSize = currentSize;
-        const newText = newBytes.toString('utf8');
+          const newBytes = readFileSync(file).slice(lastSize);
+          lastSize = currentSize;
+          const newText = newBytes.toString('utf8');
 
-        if (!ERROR_RE.test(newText)) return;
+          if (!ERROR_RE.test(newText)) return;
 
-        buffer += newText;
-        clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(async () => {
-          const chunk = buffer;
-          buffer = '';
-          await flush(chunk);
-        }, DEBOUNCE_MS);
+          buffer += newText;
+          clearTimeout(debounceTimer);
+          debounceTimer = setTimeout(async () => {
+            const chunk = buffer;
+            buffer = '';
+            await flush(chunk);
+          }, DEBOUNCE_MS);
+        } catch (err) {
+          console.error(chalk.yellow(`  ⚠ Watch error: ${err.message}`));
+        }
       }, 1000);
     });
 

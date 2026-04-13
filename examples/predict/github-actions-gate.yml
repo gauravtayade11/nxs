@@ -1,0 +1,50 @@
+name: Gate deploy on OOM risk with nxs predict
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  predict-risk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install nxs CLI
+        run: npm install -g @nextsight/nxs-cli
+
+      - name: Check cluster health with nxs predict
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          set -e
+
+          echo "Running nxs predict against production namespace..."
+          # Output risks as JSON
+          nxs predict -n production --json > predict.json
+
+          echo "Raw risks:"
+          cat predict.json
+
+          # Fail if any critical risks are present
+          if jq '.risks[] | select(.severity == "critical")' predict.json | grep -q .; then
+            echo "::error::Critical risks detected by nxs predict. Aborting deploy."
+            exit 1
+          fi
+
+          echo "No critical risks detected by nxs predict."
+
+  # Example deploy job that depends on predict-risk
+  deploy:
+    needs: predict-risk
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dummy deploy step
+        run: echo "Deploy would run here (predict-risk passed)."
+

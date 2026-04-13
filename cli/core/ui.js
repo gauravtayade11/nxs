@@ -1,5 +1,7 @@
 import chalk from 'chalk';
 import { createRequire } from 'node:module';
+import { createInterface } from 'node:readline';
+import { Writable } from 'node:stream';
 
 const _require = createRequire(import.meta.url);
 export const VERSION = _require('../../package.json').version;
@@ -61,7 +63,29 @@ function toStr(val) {
   return String(val ?? '');
 }
 
-export function printResult(result) {
+function renderConfidence(confidence) {
+  if (confidence == null) return;
+  const n    = Math.max(0, Math.min(100, Math.round(confidence)));
+  const bars = Math.round(n / 5); // 0-20 filled blocks
+  const filled = chalk.cyan('█'.repeat(bars));
+  const empty  = chalk.dim('░'.repeat(20 - bars));
+  const color  = n >= 85 ? chalk.green.bold : n >= 65 ? chalk.yellow : chalk.red;
+  console.log(`  ${chalk.dim('Confidence:')} ${filled}${empty} ${color(`${n}%`)}`);
+}
+
+function renderVia(via) {
+  if (!via) return;
+  const badges = {
+    'rules':         chalk.bgCyan.black(' RULES ENGINE '),
+    'ai-groq':       chalk.bgGreen.black(' AI · GROQ '),
+    'ai-anthropic':  chalk.bgMagenta.black(' AI · CLAUDE '),
+    'mock':          chalk.bgHex('#334155').white(' DEMO '),
+  };
+  const badge = badges[via] ?? chalk.bgHex('#334155').white(` ${via.toUpperCase()} `);
+  console.log(`  ${badge}`);
+}
+
+export function printResult(result, freq = null) {
   const color = TOOL_COLORS[result.tool] ?? chalk.white;
   const icon  = TOOL_ICONS[result.tool]  ?? '⚙  ';
 
@@ -79,10 +103,19 @@ export function printResult(result) {
 
   console.log('\n' + hr());
   console.log(color.bold(`  ${icon}${(result.tool ?? 'unknown').toUpperCase()} DETECTED`));
+  // Via badge + confidence bar on same row block
+  console.log('');
+  renderVia(result.via);
+  renderConfidence(result.confidence);
   console.log(hr());
 
   console.log(`\n${chalk.dim('📋')} ${chalk.bold('SUMMARY')}\n`);
   console.log(chalk.white('  ' + toStr(result.summary).replace(/\n/g, '\n  ')));
+
+  if (result.impact) {
+    console.log(`\n${chalk.dim('⚡')} ${chalk.bold('IMPACT')}\n`);
+    toStr(result.impact).split('\n').forEach((l) => console.log(chalk.hex('#fbbf24')('  ' + l)));
+  }
 
   console.log(`\n${chalk.dim('🔍')} ${chalk.bold('ROOT CAUSE')}\n`);
   toStr(result.rootCause).split('\n').forEach((l) => console.log(chalk.hex('#94a3b8')('  ' + l)));
@@ -102,11 +135,45 @@ export function printResult(result) {
     console.log(chalk.dim('  │ ') + chalk.hex('#00e5ff')(c.padEnd(boxW - 1)) + chalk.dim('│'))
   );
   console.log(chalk.dim('  └' + '─'.repeat(boxW + 1) + '┘'));
+
+  // Suggestions (proactive improvements)
+  if (result.suggestions?.length > 0) {
+    console.log(`\n${chalk.dim('🚀')} ${chalk.bold('SUGGESTIONS')}\n`);
+    const suggestions = Array.isArray(result.suggestions)
+      ? result.suggestions
+      : String(result.suggestions).split('\n').filter(Boolean);
+    suggestions.forEach((s) => {
+      console.log(`  ${chalk.cyan('›')} ${chalk.hex('#94a3b8')(String(s).replace(/^[-•]\s*/, ''))}`);
+    });
+  }
+
+  // Pattern frequency
+  if (freq && freq.count > 1) {
+    console.log('');
+    console.log(
+      `  ${chalk.bgYellow.black(` ⚑ PATTERN `)}  ${chalk.yellow.bold(`Seen ${freq.count}× in the last ${freq.days} days`)}  ` +
+      chalk.dim(`Last: ${new Date(freq.lastSeen).toLocaleString()}`)
+    );
+  }
+
   console.log('\n' + hr() + '\n');
 }
 
 export function prompt(rl, q) {
   return new Promise((res) => rl.question(q, res));
+}
+
+export function promptSecret(q) {
+  return new Promise((resolve) => {
+    const muted = new Writable({ write(_chunk, _enc, cb) { cb(); } });
+    const rl = createInterface({ input: process.stdin, output: muted, terminal: true });
+    process.stdout.write(q);
+    rl.question('', (answer) => {
+      process.stdout.write('\n');
+      rl.close();
+      resolve(answer);
+    });
+  });
 }
 
 export async function readStdin() {
