@@ -11,6 +11,7 @@ import {
 } from '../core/ui.js';
 
 // Strip ANSI escape codes
+// eslint-disable-next-line no-control-regex
 const strip = (s) => s.replace(/\x1B\[[0-9;]*m/g, '');
 
 // Silence console output for rendering tests

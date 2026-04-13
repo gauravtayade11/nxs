@@ -5,7 +5,7 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 
 import { applyConfig, loadConfig, saveConfig, loadHistory, CONFIG_FILE, HISTORY_FILE } from './core/config.js';
-import { printBanner, providerInfo, hr, prompt, promptSecret, VERSION } from './core/ui.js';
+import { printBanner, providerInfo, hr, promptSecret, VERSION } from './core/ui.js';
 import { registerDevops }  from './tools/devops.js';
 import { registerCloud }   from './tools/cloud.js';
 import { registerK8s }     from './tools/k8s.js';
@@ -69,7 +69,6 @@ program
 
     const div  = chalk.dim('─'.repeat(60));
     const head = (t) => console.log(`\n  ${chalk.bold.white(t)}\n`);
-    const tag  = (t, color) => color(` ${t} `);
 
     // ── What it does ──────────────────────────────────────────────────────────
     console.log(div);
@@ -122,7 +121,7 @@ program
       },
     ];
 
-    coreTools.forEach(({ name, color, tag: t, badge, cmds }) => {
+    coreTools.forEach(({ name, color, tag: t, cmds }) => {
       console.log(`  ${color.bold(name)}  ${chalk.dim(t)}`);
       cmds.forEach(([cmd, desc]) => {
         console.log(`    ${chalk.dim('›')} ${chalk.cyan((name + ' ' + cmd).padEnd(42))} ${chalk.hex('#64748b')(desc)}`);

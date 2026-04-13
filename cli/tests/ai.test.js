@@ -5,9 +5,9 @@
  *   - no-key mode (rules or mock fallback)
  * Run: node --test cli/tests/ai.test.js
  */
-import { test, describe, before, after } from 'node:test';
+import { test, describe, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { analyze, chat } from '../core/ai.js';
+import { analyze, chat, clearCache } from '../core/ai.js';
 
 const PROMPT = 'You are a DevOps expert. Analyze this log.';
 
@@ -126,7 +126,10 @@ describe('analyze() — Groq path', () => {
     origFetch  = globalThis.fetch;
     process.env.GROQ_API_KEY = 'test-groq-key';
     delete process.env.ANTHROPIC_API_KEY;
+    clearCache();
   });
+
+  beforeEach(() => { clearCache(); });
 
   after(() => {
     globalThis.fetch = origFetch;

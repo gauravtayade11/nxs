@@ -169,6 +169,10 @@ async function tryAnthropic(augmentedPrompt, logText, mockFn, ruleResult) {
   }
 }
 
+export function clearCache() {
+  try { writeFileSync(CACHE_FILE, JSON.stringify({}), 'utf8'); } catch { /* non-fatal */ }
+}
+
 // ── Public API ─────────────────────────────────────────────────────────────
 
 /**

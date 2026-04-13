@@ -56,9 +56,6 @@ function classifySeverity(line) {
   return null;
 }
 
-function hasError(line) {
-  return classifySeverity(line) !== null;
-}
 
 const SEV_RANK = { critical: 2, warning: 1, info: 0 };
 
