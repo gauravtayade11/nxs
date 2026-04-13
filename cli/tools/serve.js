@@ -373,7 +373,7 @@ GitHub Actions — auto-notify on failure (add to .github/workflows/ci.yml):
     steps:
       - run: |
           gh run view \${{ github.run_id }} --log-failed | \\
-          node cli/index.js ci analyze --stdin --notify slack --no-chat --json
+          node cli/index.js ci analyze --stdin --notify slack --json
         env:
           SLACK_WEBHOOK_URL: \${{ secrets.SLACK_WEBHOOK_URL }}
           GROQ_API_KEY: \${{ secrets.GROQ_API_KEY }}

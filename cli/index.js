@@ -252,7 +252,7 @@ program
       ['Instant diagnosis (no API key)','kubectl logs my-pod --previous | nxs k8s debug --stdin --fast'],
       ['Debug + Slack alert',           'kubectl logs my-pod --previous | nxs k8s debug --stdin --notify slack'],
       ['Latest CI failure',             'nxs ci analyze --latest'],
-      ['Gate CI on severity',           'nxs ci analyze build.log --fail-on critical --no-chat'],
+      ['Gate CI on severity',           'nxs ci analyze build.log --fail-on critical'],
       ['Predict pod failures',          'nxs predict -n production --watch'],
       ['Scan cluster for CVEs',         'nxs sec cluster -n production --detailed'],
       ['Watch live pod logs',           'nxs watch "kubectl logs -f deploy/my-app" --severity critical'],
@@ -295,7 +295,7 @@ program
       ['-o, --output <file>',  'Save full analysis as a markdown report'],
       ['--redact',             'Scrub secrets/tokens before sending to AI'],
       ['-j, --json',           'Structured JSON output for scripting'],
-      ['--no-chat',            'Skip the follow-up Q&A loop'],
+      ['--chat',               'Enable follow-up Q&A after analysis (opt-in)'],
     ];
 
     flags.forEach(([flag, desc]) => {
