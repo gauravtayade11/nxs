@@ -93,7 +93,7 @@ Examples:
     .option('--clear', 'Clear DevOps history')
     .option('-j, --json', 'Output as JSON')
     .action(async (opts) => {
-      printBanner('CI/CD · Docker · Terraform debugger');
+      if (!opts.json) printBanner('CI/CD · Docker · Terraform debugger');
       await runHistory('devops', opts);
     });
 

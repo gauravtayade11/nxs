@@ -367,7 +367,7 @@ Examples:
     .option('--clear', 'Clear sec history')
     .option('-j, --json', 'Output as JSON')
     .action(async (opts) => {
-      printBanner('Security scan analyzer');
+      if (!opts.json) printBanner('Security scan analyzer');
       await runHistory('sec', opts);
     });
 

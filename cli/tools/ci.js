@@ -35,6 +35,8 @@ Detection patterns:
 
 Always identify: which step/job failed, what command, what error code, what the fix is.
 
+IMPORTANT: This is a CI/CD build log — NOT a Kubernetes or infrastructure log. The "commands" field must only contain CI-relevant commands (npm, yarn, docker build, git, gh CLI, pipeline YAML edits). Never suggest kubectl, Helm, or cluster commands unless the log explicitly shows a Kubernetes deployment step failing.
+
 Return ONLY valid JSON. No markdown fences.`;
 
 const MOCK = {
@@ -248,7 +250,7 @@ Examples:
     .option('--clear', 'Clear ci history')
     .option('-j, --json', 'Output as JSON')
     .action(async (opts) => {
-      printBanner('CI/CD failure analyzer');
+      if (!opts.json) printBanner('CI/CD failure analyzer');
       await runHistory('ci', opts);
     });
 }

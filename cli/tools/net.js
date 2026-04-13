@@ -182,7 +182,7 @@ Examples:
     .option('--clear', 'Clear net history')
     .option('-j, --json', 'Output as JSON')
     .action(async (opts) => {
-      printBanner('Network diagnostics');
+      if (!opts.json) printBanner('Network diagnostics');
       await runHistory('net', opts);
     });
 

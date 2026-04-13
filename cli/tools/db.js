@@ -314,7 +314,7 @@ Examples:
     .option('--clear', 'Clear db history')
     .option('-j, --json', 'Output as JSON')
     .action(async (opts) => {
-      printBanner('Database error analyzer');
+      if (!opts.json) printBanner('Database error analyzer');
       await runHistory('db', opts);
     });
 

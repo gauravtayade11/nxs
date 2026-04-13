@@ -194,7 +194,7 @@ Examples:
     .option('--clear', 'Clear k8s history')
     .option('-j, --json', 'Output as JSON')
     .action(async (opts) => {
-      printBanner('Kubernetes deep-dive debugger');
+      if (!opts.json) printBanner('Kubernetes deep-dive debugger');
       await runHistory('k8s', opts);
     });
 

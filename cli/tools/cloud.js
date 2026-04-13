@@ -93,7 +93,7 @@ Examples:
     .option('--clear', 'Clear cloud history')
     .option('-j, --json', 'Output as JSON')
     .action(async (opts) => {
-      printBanner('AWS · GCP · Azure cloud debugger');
+      if (!opts.json) printBanner('AWS · GCP · Azure cloud debugger');
       await runHistory('cloud', opts);
     });
 

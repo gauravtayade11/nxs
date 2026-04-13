@@ -61,7 +61,7 @@ export async function runAnalyze(toolModule, systemPrompt, mockFn, file, opts) {
     if (!logText.trim()) { console.error(chalk.red('  No input from stdin.')); process.exit(1); }
     if (!opts.json) {
       console.log(chalk.dim(`  Input: stdin (${logText.length} chars)\n`));
-      if (logText.length < 200) {
+      if (logText.length < 200 && toolModule === 'k8s') {
         console.log(chalk.dim('  Tip: for richer analysis with exact pod names, use --pod <name> -n <namespace>\n'));
       }
     }
