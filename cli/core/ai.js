@@ -32,10 +32,12 @@ function saveCache(store) {
   } catch { /* non-fatal */ }
 }
 
-const CACHE_ENABLED = process.env.NODE_ENV !== 'test';
+function isCacheEnabled() {
+  return process.env.NODE_ENV !== 'test' && process.env.NXS_NO_CACHE !== '1';
+}
 
 function cacheGet(key) {
-  if (!CACHE_ENABLED || process.env.NXS_NO_CACHE === '1') return null;
+  if (!isCacheEnabled()) return null;
   const store = loadCache();
   const entry = store[key];
   if (!entry) return null;
@@ -48,7 +50,7 @@ function cacheGet(key) {
 }
 
 function cacheSet(key, result) {
-  if (!CACHE_ENABLED || process.env.NXS_NO_CACHE === '1') return;
+  if (!isCacheEnabled()) return;
   const store = loadCache();
   // Evict oldest entries if over max
   const keys = Object.keys(store);
