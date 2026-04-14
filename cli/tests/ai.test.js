@@ -7,7 +7,7 @@
  */
 import { test, describe, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { analyze, chat, clearCache } from '../core/ai.js';
+import { analyze, chat, clearCache, _setAnthropicCreate } from '../core/ai.js';
 
 const PROMPT = 'You are a DevOps expert. Analyze this log.';
 
@@ -233,6 +233,174 @@ describe('analyze() — Groq path', () => {
       () => analyze(noRuleLog, PROMPT, mockFn),
       (err) => { assert.ok(err instanceof Error); return true; }
     );
+  });
+});
+
+// ── Anthropic path ────────────────────────────────────────────────────────
+
+describe('analyze() — Anthropic path', () => {
+  let savedGroq, savedAnt;
+
+  before(() => {
+    savedGroq = process.env.GROQ_API_KEY;
+    savedAnt  = process.env.ANTHROPIC_API_KEY;
+    delete process.env.GROQ_API_KEY;
+    process.env.ANTHROPIC_API_KEY = 'test-ant-key';
+    clearCache();
+  });
+
+  beforeEach(() => { clearCache(); });
+
+  after(() => {
+    _setAnthropicCreate(null);
+    if (savedGroq !== undefined) process.env.GROQ_API_KEY      = savedGroq; else delete process.env.GROQ_API_KEY;
+    if (savedAnt  !== undefined) process.env.ANTHROPIC_API_KEY = savedAnt;  else delete process.env.ANTHROPIC_API_KEY;
+  });
+
+  const noRuleLog = 'ANTHROPIC_TEST_LOG_NO_RULE_MATCH_xyzabc';
+
+  test('Anthropic success → via: ai-anthropic, confidence 75 default', async () => {
+    _setAnthropicCreate(async () => ({
+      content: [{ type: 'text', text: JSON.stringify({
+        tool: 'kubernetes', severity: 'warning',
+        summary: 'test', rootCause: 'test', fixSteps: 'test', commands: 'test',
+      }) }],
+    }));
+    const result = await analyze(noRuleLog, PROMPT, mockFn);
+    assert.strictEqual(result.via, 'ai-anthropic');
+    assert.strictEqual(result.confidence, 75);
+  });
+
+  test('Anthropic preserves confidence when AI includes it', async () => {
+    _setAnthropicCreate(async () => ({
+      content: [{ type: 'text', text: JSON.stringify({
+        tool: 'kubernetes', severity: 'critical',
+        summary: 'test', rootCause: 'test', fixSteps: 'test', commands: 'test',
+        confidence: 92,
+      }) }],
+    }));
+    const result = await analyze(noRuleLog, PROMPT, mockFn);
+    assert.strictEqual(result.via, 'ai-anthropic');
+    assert.strictEqual(result.confidence, 92);
+  });
+
+  test('Anthropic rate_limit → fallback to mock with _warning', async () => {
+    _setAnthropicCreate(async () => { throw new Error('rate_limit exceeded'); });
+    const result = await analyze(noRuleLog, PROMPT, mockFn);
+    assert.ok(result._warning?.includes('Anthropic unavailable'));
+    assert.strictEqual(result.via, 'mock');
+  });
+
+  test('Anthropic overloaded → fallback to rule result with _warning', async () => {
+    _setAnthropicCreate(async () => { throw new Error('overloaded_error: server overloaded'); });
+    // ci-timeout has confidence 78 — falls through to Anthropic
+    const result = await analyze('Step exceeded the timeout limit of 30 minutes', PROMPT, mockFn);
+    assert.ok(result._warning?.includes('Anthropic unavailable'));
+    assert.strictEqual(result.via, 'rules');
+  });
+
+  test('Anthropic non-recoverable error → throws', async () => {
+    _setAnthropicCreate(async () => { throw new Error('invalid_api_key: auth failed'); });
+    await assert.rejects(
+      () => analyze(noRuleLog, PROMPT, mockFn),
+      (err) => { assert.ok(err instanceof Error); return true; }
+    );
+  });
+
+  test('Groq fallthrough to Anthropic when Groq hits rate_limit', async () => {
+    // Set both keys — Groq rate_limits, falls through to Anthropic
+    process.env.GROQ_API_KEY = 'test-groq-key';
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async () => ({
+      ok: false,
+      json: async () => ({ error: { message: 'rate_limit exceeded' } }),
+    });
+    _setAnthropicCreate(async () => ({
+      content: [{ type: 'text', text: JSON.stringify({
+        tool: 'kubernetes', severity: 'info',
+        summary: 'fallthrough', rootCause: 'test', fixSteps: 'test', commands: 'test',
+      }) }],
+    }));
+    try {
+      const result = await analyze(noRuleLog, PROMPT, mockFn);
+      assert.strictEqual(result.via, 'ai-anthropic');
+    } finally {
+      globalThis.fetch = origFetch;
+      delete process.env.GROQ_API_KEY;
+    }
+  });
+});
+
+// ── Cache eviction ─────────────────────────────────────────────────────────
+
+describe('analyze() — cache eviction', () => {
+  let savedGroq, savedAnt, origFetch;
+
+  before(() => {
+    savedGroq  = process.env.GROQ_API_KEY;
+    savedAnt   = process.env.ANTHROPIC_API_KEY;
+    origFetch  = globalThis.fetch;
+    process.env.GROQ_API_KEY = 'test-groq-key';
+    delete process.env.ANTHROPIC_API_KEY;
+  });
+
+  beforeEach(() => { clearCache(); });
+
+  after(() => {
+    globalThis.fetch = origFetch;
+    if (savedGroq !== undefined) process.env.GROQ_API_KEY      = savedGroq; else delete process.env.GROQ_API_KEY;
+    if (savedAnt  !== undefined) process.env.ANTHROPIC_API_KEY = savedAnt;  else delete process.env.ANTHROPIC_API_KEY;
+    clearCache();
+  });
+
+  test('expired cache entry is evicted and AI is called again', async () => {
+    const savedNodeEnv = process.env.NODE_ENV;
+    delete process.env.NODE_ENV;
+    clearCache();
+
+    const { readFileSync, writeFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const { homedir } = await import('node:os');
+    const CACHE_FILE = join(homedir(), '.nxs', 'cache.json');
+    const log = 'EVICTION_TEST_LOG_xyzabc123';
+
+    let fetchCallCount = 0;
+    globalThis.fetch = async () => {
+      fetchCallCount++;
+      return {
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: JSON.stringify({
+            tool: 'kubernetes', severity: 'warning',
+            summary: 'fresh', rootCause: 'x', fixSteps: 'x', commands: 'x',
+          }) } }],
+        }),
+      };
+    };
+
+    try {
+      // First call — populates cache with the correct augmented-prompt key
+      await analyze(log, PROMPT, mockFn);
+      assert.strictEqual(fetchCallCount, 1, 'first call should hit AI');
+
+      // Second call — should be a cache hit
+      const cachedResult = await analyze(log, PROMPT, mockFn);
+      assert.strictEqual(fetchCallCount, 1, 'second call should use cache');
+      assert.strictEqual(cachedResult._cached, true, 'second result should be marked cached');
+
+      // Manually expire all cache entries
+      const store = JSON.parse(readFileSync(CACHE_FILE, 'utf8'));
+      for (const key of Object.keys(store)) store[key].ts = Date.now() - 10 * 60 * 1000;
+      writeFileSync(CACHE_FILE, JSON.stringify(store));
+
+      // Third call — expired entry evicted, AI called again
+      const result = await analyze(log, PROMPT, mockFn);
+      assert.strictEqual(fetchCallCount, 2, 'third call should hit AI — cache expired');
+      assert.ok(!result._cached, 'fresh result should not be marked cached');
+    } finally {
+      process.env.NODE_ENV = savedNodeEnv;
+      clearCache();
+    }
   });
 });
 

@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import {
   hr, VERSION, providerInfo,
   TOOL_COLORS, TOOL_ICONS,
-  printResult, printBanner,
+  printResult, printBanner, prompt, readStdin,
 } from '../core/ui.js';
 
 // Strip ANSI escape codes
@@ -199,6 +199,58 @@ describe('printResult()', () => {
   test('handles null/missing confidence', () => {
     const { confidence: _, ...r } = baseResult;
     assert.doesNotThrow(() => withSilentStdout(() => printResult(r)));
+  });
+});
+
+// ── prompt() ──────────────────────────────────────────────────────────────
+
+describe('prompt()', () => {
+  test('resolves with the value passed to the readline callback', async () => {
+    const mockRl = { question: (_q, cb) => cb('my-answer') };
+    const answer = await prompt(mockRl, 'Enter: ');
+    assert.strictEqual(answer, 'my-answer');
+  });
+
+  test('resolves with empty string when callback called with empty', async () => {
+    const mockRl = { question: (_q, cb) => cb('') };
+    const answer = await prompt(mockRl, 'Enter: ');
+    assert.strictEqual(answer, '');
+  });
+});
+
+// ── readStdin() ───────────────────────────────────────────────────────────
+
+describe('readStdin()', () => {
+  test('collects all data chunks until end event', async () => {
+    const { PassThrough } = await import('node:stream');
+    const origStdin = process.stdin;
+    const mockStdin = new PassThrough();
+    Object.defineProperty(process, 'stdin', { value: mockStdin, configurable: true, writable: true });
+    try {
+      const promise = readStdin();
+      mockStdin.emit('data', 'hello ');
+      mockStdin.emit('data', 'world');
+      mockStdin.emit('end');
+      const result = await promise;
+      assert.strictEqual(result, 'hello world');
+    } finally {
+      Object.defineProperty(process, 'stdin', { value: origStdin, configurable: true, writable: true });
+    }
+  });
+
+  test('resolves with empty string when stdin has no data', async () => {
+    const { PassThrough } = await import('node:stream');
+    const origStdin = process.stdin;
+    const mockStdin = new PassThrough();
+    Object.defineProperty(process, 'stdin', { value: mockStdin, configurable: true, writable: true });
+    try {
+      const promise = readStdin();
+      mockStdin.emit('end');
+      const result = await promise;
+      assert.strictEqual(result, '');
+    } finally {
+      Object.defineProperty(process, 'stdin', { value: origStdin, configurable: true, writable: true });
+    }
   });
 });
 

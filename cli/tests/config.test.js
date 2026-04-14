@@ -60,6 +60,12 @@ describe('loadConfig() / saveConfig()', () => {
     const cfg = loadConfig();
     assert.deepStrictEqual(cfg, {});
   });
+
+  test('corrupt config JSON returns empty object', () => {
+    writeFileSync(CONFIG_FILE, 'not valid json{{', 'utf8');
+    const cfg = loadConfig();
+    assert.deepStrictEqual(cfg, {});
+  });
 });
 
 // ── addHistory() / loadHistory() ───────────────────────────────────────────
@@ -115,6 +121,18 @@ describe('addHistory() / loadHistory()', () => {
   test('loadHistory() with no history file returns empty array', () => {
     if (existsSync(HISTORY_FILE)) unlinkSync(HISTORY_FILE);
     assert.deepStrictEqual(loadHistory(), []);
+  });
+
+  test('corrupt history JSON returns empty array', () => {
+    writeFileSync(HISTORY_FILE, 'not valid json{{', 'utf8');
+    assert.deepStrictEqual(loadHistory(), []);
+  });
+
+  test('addHistory with via !== rules uses tool:severity as errorTag', () => {
+    saveHistory([]);
+    addHistory('k8s', 'log', { tool: 'kubernetes', severity: 'warning', summary: 'x', via: 'ai-groq', confidence: 80 });
+    const entries = loadHistory('k8s');
+    assert.strictEqual(entries[0].errorTag, 'kubernetes:warning');
   });
 });
 
@@ -174,28 +192,44 @@ describe('applyConfig()', () => {
 
   before(() => {
     savedKeys = {
-      GROQ:  process.env.GROQ_API_KEY,
-      ANT:   process.env.ANTHROPIC_API_KEY,
-      SLACK: process.env.SLACK_WEBHOOK_URL,
+      GROQ:    process.env.GROQ_API_KEY,
+      ANT:     process.env.ANTHROPIC_API_KEY,
+      TOKEN:   process.env.SLACK_BOT_TOKEN,
+      CHANNEL: process.env.SLACK_CHANNEL,
+      WEBHOOK: process.env.SLACK_WEBHOOK_URL,
     };
     delete process.env.GROQ_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.SLACK_BOT_TOKEN;
+    delete process.env.SLACK_CHANNEL;
     delete process.env.SLACK_WEBHOOK_URL;
-    saveConfig({ GROQ_API_KEY: 'from-config', SLACK_WEBHOOK_URL: 'https://hooks.example.com' });
+    saveConfig({
+      GROQ_API_KEY: 'from-config',
+      ANTHROPIC_API_KEY: 'ant-from-config',
+      SLACK_BOT_TOKEN: 'token-from-config',
+      SLACK_CHANNEL: '#alerts',
+      SLACK_WEBHOOK_URL: 'https://hooks.example.com',
+    });
   });
 
   after(() => {
-    if (savedKeys.GROQ  !== undefined) process.env.GROQ_API_KEY      = savedKeys.GROQ;
-    else                               delete process.env.GROQ_API_KEY;
-    if (savedKeys.ANT   !== undefined) process.env.ANTHROPIC_API_KEY  = savedKeys.ANT;
-    else                               delete process.env.ANTHROPIC_API_KEY;
-    if (savedKeys.SLACK !== undefined) process.env.SLACK_WEBHOOK_URL  = savedKeys.SLACK;
-    else                               delete process.env.SLACK_WEBHOOK_URL;
+    const restoreOrDelete = (envKey, saved) => {
+      if (saved !== undefined) process.env[envKey] = saved;
+      else delete process.env[envKey];
+    };
+    restoreOrDelete('GROQ_API_KEY', savedKeys.GROQ);
+    restoreOrDelete('ANTHROPIC_API_KEY', savedKeys.ANT);
+    restoreOrDelete('SLACK_BOT_TOKEN', savedKeys.TOKEN);
+    restoreOrDelete('SLACK_CHANNEL', savedKeys.CHANNEL);
+    restoreOrDelete('SLACK_WEBHOOK_URL', savedKeys.WEBHOOK);
   });
 
-  test('sets env vars from config when not already set', () => {
+  test('sets all env vars from config when not already set', () => {
     applyConfig();
     assert.strictEqual(process.env.GROQ_API_KEY, 'from-config');
+    assert.strictEqual(process.env.ANTHROPIC_API_KEY, 'ant-from-config');
+    assert.strictEqual(process.env.SLACK_BOT_TOKEN, 'token-from-config');
+    assert.strictEqual(process.env.SLACK_CHANNEL, '#alerts');
     assert.strictEqual(process.env.SLACK_WEBHOOK_URL, 'https://hooks.example.com');
   });
 

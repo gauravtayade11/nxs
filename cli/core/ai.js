@@ -101,15 +101,24 @@ async function callGroq(systemPrompt, userMessage, jsonMode = true) {
   return data.choices[0].message.content;
 }
 
+// Test seam — replaced in unit tests so no real HTTP calls are made
+let _anthropicCreateOverride = null;
+export function _setAnthropicCreate(fn) { _anthropicCreateOverride = fn; }
+
 async function callAnthropic(systemPrompt, messages, jsonMode = true) {
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  const response = await client.messages.create({
+  const args = {
     model: 'claude-opus-4-6',
     max_tokens: jsonMode ? 2048 : 4096,
     ...(jsonMode ? { thinking: { type: 'adaptive' } } : {}),
     system: systemPrompt,
     messages: Array.isArray(messages) ? messages : [{ role: 'user', content: messages }],
-  });
+  };
+  if (_anthropicCreateOverride) {
+    const response = await _anthropicCreateOverride(args);
+    return response.content.find((b) => b.type === 'text')?.text ?? '';
+  }
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const response = await client.messages.create(args);
   return response.content.find((b) => b.type === 'text')?.text ?? '';
 }
 
