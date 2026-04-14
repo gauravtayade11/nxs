@@ -1,9 +1,4 @@
 {
-  "name": "nxs",
-  "rootDirectory": "docs",
-  "framework": null,
-  "buildCommand": null,
-  "outputDirectory": ".",
   "cleanUrls": true,
   "trailingSlash": false,
   "headers": [
