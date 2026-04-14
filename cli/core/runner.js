@@ -141,12 +141,14 @@ export async function runAnalyze(toolModule, systemPrompt, mockFn, file, opts) {
     console.log(chalk.dim('  ⚡ Fast mode — using rule engine only (no AI)\n'));
   }
 
+  const t0 = Date.now();
   let result;
   try {
     result = await analyze(logText, systemPrompt, mockFn, { fast: !!opts.fast });
     const via = result.via === 'rules' ? chalk.cyan('rules engine') : result.via === 'ai-groq' ? chalk.green('Groq AI') : result.via === 'ai-anthropic' ? chalk.magenta('Claude AI') : chalk.dim('demo');
     const cacheHit = result._cached ? chalk.dim('  ⚡ cached') : '';
-    spinner.succeed(chalk.green('Analysis complete') + chalk.dim(`  via ${via}`) + cacheHit);
+    const latency  = process.env.NXS_DEBUG === '1' ? chalk.dim(`  ${Date.now() - t0}ms`) : '';
+    spinner.succeed(chalk.green('Analysis complete') + chalk.dim(`  via ${via}`) + cacheHit + latency);
   } catch (err) {
     spinner.fail(chalk.red(`Analysis failed: ${err.message}`));
     if (err.message?.includes('ENOTFOUND') || err.message?.includes('fetch failed')) {
@@ -210,9 +212,11 @@ export async function runAnalyze(toolModule, systemPrompt, mockFn, file, opts) {
     }
   }
 
-  // --fail-on: exit 1 if severity matches
-  if (opts.failOn && result.severity === opts.failOn) {
-    console.log(chalk.red(`  ✗ Severity is '${result.severity}' — exiting with code 1 (--fail-on ${opts.failOn})\n`));
+  // --fail-on: exit 1 if severity meets threshold (also via global --fail-on env)
+  const failOn = opts.failOn ?? process.env.NXS_FAIL_ON;
+  const SEV_ORDER = { info: 0, warning: 1, critical: 2 };
+  if (failOn && SEV_ORDER[result.severity] >= (SEV_ORDER[failOn] ?? 99)) {
+    console.log(chalk.red(`  ✗ Severity '${result.severity}' meets --fail-on '${failOn}' threshold — exiting with code 1\n`));
     process.exit(1);
   }
 

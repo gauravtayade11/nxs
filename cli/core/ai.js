@@ -35,7 +35,7 @@ function saveCache(store) {
 const CACHE_ENABLED = process.env.NODE_ENV !== 'test';
 
 function cacheGet(key) {
-  if (!CACHE_ENABLED) return null;
+  if (!CACHE_ENABLED || process.env.NXS_NO_CACHE === '1') return null;
   const store = loadCache();
   const entry = store[key];
   if (!entry) return null;
@@ -48,7 +48,7 @@ function cacheGet(key) {
 }
 
 function cacheSet(key, result) {
-  if (!CACHE_ENABLED) return;
+  if (!CACHE_ENABLED || process.env.NXS_NO_CACHE === '1') return;
   const store = loadCache();
   // Evict oldest entries if over max
   const keys = Object.keys(store);
@@ -184,11 +184,18 @@ export function clearCache() {
  *   3. If confidence >= 95 from rules → return rule result (skip AI)
  *   4. Otherwise → call Groq / Anthropic with augmented prompt
  */
+function debugLog(msg) {
+  if (process.env.NXS_DEBUG === '1') process.stderr.write(`  ${msg}\n`);
+}
+
 export async function analyze(logText, systemPrompt, mockFn, opts = {}) {
   const groqKey = process.env.GROQ_API_KEY;
   const antKey  = process.env.ANTHROPIC_API_KEY;
+  const t0      = Date.now();
+  debugLog(`[debug] input: ${logText.length} chars  providers: ${groqKey ? 'groq' : ''}${antKey ? ' anthropic' : ''}${!groqKey && !antKey ? 'none (demo)' : ''}`);
 
   const ruleResult = matchRule(logText);
+  if (ruleResult) debugLog(`[debug] rule match: ${ruleResult.id ?? 'matched'} (confidence ${ruleResult.confidence}%)`);
 
   // --fast: rules only, no AI
   if (opts.fast) {
@@ -201,7 +208,10 @@ export async function analyze(logText, systemPrompt, mockFn, opts = {}) {
   }
 
   // High-confidence rule match — skip AI
-  if (ruleResult && ruleResult.confidence >= 95) return ruleResult;
+  if (ruleResult && ruleResult.confidence >= 95) {
+    debugLog(`[debug] rules engine short-circuit (${ruleResult.confidence}% ≥ 95%)  ${Date.now() - t0}ms`);
+    return ruleResult;
+  }
 
   // Augment prompt with rule hint if partial match
   let augmentedPrompt = systemPrompt + AI_SCHEMA_SUFFIX;
@@ -212,20 +222,32 @@ export async function analyze(logText, systemPrompt, mockFn, opts = {}) {
   // Cache check — skip AI if we've seen this exact input recently
   const key = cacheKey(augmentedPrompt, logText);
   const cached = cacheGet(key);
-  if (cached) { cached._cached = true; return cached; }
+  if (cached) {
+    debugLog(`[debug] cache hit  ${Date.now() - t0}ms`);
+    cached._cached = true;
+    return cached;
+  }
+  debugLog(`[debug] cache miss — calling AI`);
 
   if (groqKey) {
     const { result, fallthrough } = await tryGroq(augmentedPrompt, logText, mockFn, ruleResult, antKey);
-    if (!fallthrough) { if (result) cacheSet(key, result); return result; }
+    if (!fallthrough) {
+      debugLog(`[debug] groq responded  ${Date.now() - t0}ms`);
+      if (result) cacheSet(key, result);
+      return result;
+    }
+    debugLog(`[debug] groq fallthrough — trying anthropic`);
   }
 
   if (antKey) {
     const result = await tryAnthropic(augmentedPrompt, logText, mockFn, ruleResult);
+    debugLog(`[debug] anthropic responded  ${Date.now() - t0}ms`);
     cacheSet(key, result);
     return result;
   }
 
   // No API keys
+  debugLog(`[debug] no API keys — using mock/rules  ${Date.now() - t0}ms`);
   if (ruleResult) { ruleResult._mock = true; return ruleResult; }
   const result = mockFn(logText);
   result._mock = true;

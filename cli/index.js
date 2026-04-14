@@ -35,7 +35,20 @@ const program = new Command();
 program
   .name('nxs')
   .description('NextSight — multi-tool DevOps & Cloud debugger')
-  .version(VERSION, '-v, --version');
+  .version(VERSION, '-v, --version')
+  .option('--no-color',          'Disable color output (also: NO_COLOR env var)')
+  .option('--no-cache',          'Bypass the AI response cache for a fresh result')
+  .option('--debug',             'Show provider, latency, cache hit, and prompt size')
+  .option('--fail-on <severity>', 'Exit 1 if result severity meets threshold: critical|warning|info');
+
+// Apply global options before any command action runs
+program.hook('preAction', () => {
+  const g = program.opts();
+  if (g.color === false || process.env.NO_COLOR) chalk.level = 0;
+  if (g.noCache) process.env.NXS_NO_CACHE = '1';
+  if (g.debug)   process.env.NXS_DEBUG   = '1';
+  if (g.failOn)  process.env.NXS_FAIL_ON = g.failOn;
+});
 
 // ── Register tool modules ──────────────────────────────────────────────────
 
