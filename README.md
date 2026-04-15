@@ -2,6 +2,8 @@
 
 [![npm](https://img.shields.io/npm/v/@nextsight/nxs-cli)](https://www.npmjs.com/package/@nextsight/nxs-cli)
 [![npm downloads](https://img.shields.io/npm/dm/@nextsight/nxs-cli)](https://www.npmjs.com/package/@nextsight/nxs-cli)
+[![CI](https://github.com/gauravtayade11/nxs/actions/workflows/ci.yml/badge.svg)](https://github.com/gauravtayade11/nxs/actions/workflows/ci.yml)
+[![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](https://nodejs.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/gauravtayade11/nxs?style=social)](https://github.com/gauravtayade11/nxs)
 [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=gauravtayade11_nxs&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=gauravtayade11_nxs)

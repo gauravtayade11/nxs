@@ -9,6 +9,7 @@ import ora from 'ora';
 import { printBanner, hr } from '../core/ui.js';
 import { analyze } from '../core/ai.js';
 import { printResult } from '../core/ui.js';
+import { warnIfSensitive, redact as redactText } from '../core/redact.js';
 
 const WATCH_SYSTEM_PROMPT = `You are a senior DevOps engineer doing real-time incident response. Analyze this log excerpt that contains one or more errors.
 
@@ -82,6 +83,7 @@ export function registerWatch(program) {
     .option('--context <n>', 'Lines of context to include per error analysis (default: 40)', '40')
     .option('--severity <level>', 'Minimum severity to trigger AI: critical|warning (default: warning)', 'warning')
     .option('--notify <target>', 'Alert target after each analysis: slack')
+    .option('--redact', 'Scrub secrets/tokens from log lines before sending to AI')
     .addHelpText('after', `
 <source> is a log file path OR a shell command (wrap commands in quotes):
 
@@ -113,30 +115,32 @@ Examples:
       let slackUrl = null;
       if (opts.notify === 'slack') {
         slackUrl = process.env.SLACK_WEBHOOK_URL;
-        if (!slackUrl) {
+        if (slackUrl) {
+          console.log(chalk.green('  ✓ Slack notifications enabled\n'));
+        } else {
           console.log(chalk.yellow('  ⚠ SLACK_WEBHOOK_URL not set — Slack notifications disabled'));
           console.log(chalk.dim('    Add to .env: SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...\n'));
-        } else {
-          console.log(chalk.green('  ✓ Slack notifications enabled\n'));
         }
       }
+
+      const shouldRedact = !!opts.redact;
 
       // File vs command detection
       const fp = resolve(process.cwd(), source);
       const isFile = existsSync(fp);
 
       if (isFile) {
-        await watchFile(fp, { interval, cooldown, ctxLines, slackUrl, minSeverity });
+        await watchFile(fp, { interval, cooldown, ctxLines, slackUrl, minSeverity, shouldRedact });
       } else {
         // Treat as shell command
-        await watchCommand(source, { cooldown, ctxLines, slackUrl, minSeverity });
+        await watchCommand(source, { cooldown, ctxLines, slackUrl, minSeverity, shouldRedact });
       }
     });
 }
 
 // ── File watcher ────────────────────────────────────────────────────────────
 
-async function watchFile(fp, { interval, cooldown, ctxLines, slackUrl, minSeverity }) {
+async function watchFile(fp, { interval, cooldown, ctxLines, slackUrl, minSeverity, shouldRedact }) {
   let lastSize = statSync(fp).size;
   let lastAnalysis = 0;
   const buffer = [];
@@ -175,7 +179,7 @@ async function watchFile(fp, { interval, cooldown, ctxLines, slackUrl, minSeveri
       }
 
       lastAnalysis = Date.now();
-      await triggerAnalysis(buffer.slice(-ctxLines), errorLines, slackUrl);
+      await triggerAnalysis(buffer.slice(-ctxLines), errorLines, slackUrl, shouldRedact);
     } catch { /* file rotation / access error — keep watching */ }
   };
 
@@ -189,7 +193,7 @@ async function watchFile(fp, { interval, cooldown, ctxLines, slackUrl, minSeveri
 
 // ── Command watcher ─────────────────────────────────────────────────────────
 
-async function watchCommand(source, { cooldown, ctxLines, slackUrl, minSeverity }) {
+async function watchCommand(source, { cooldown, ctxLines, slackUrl, minSeverity, shouldRedact }) {
   console.log(chalk.dim(`  Command:  ${chalk.white(source)}`));
   console.log(chalk.dim(`  Cooldown: ${cooldown / 1000}s between analyses`));
   console.log(chalk.dim(`  Context:  ${ctxLines} lines\n`));
@@ -206,7 +210,9 @@ async function watchCommand(source, { cooldown, ctxLines, slackUrl, minSeverity 
     if (!line.trim()) return;
     // Show the live output (dim)
     const lineSev = classifySeverity(line);
-    const lineColor = lineSev === 'critical' ? chalk.red : lineSev === 'warning' ? chalk.yellow : chalk.dim;
+    let lineColor = chalk.dim;
+    if (lineSev === 'critical') lineColor = chalk.red;
+    else if (lineSev === 'warning') lineColor = chalk.yellow;
     console.log(lineColor('  ' + line.slice(0, 140)));
     buffer.push(line);
     if (buffer.length > 500) buffer.shift();
@@ -215,7 +221,7 @@ async function watchCommand(source, { cooldown, ctxLines, slackUrl, minSeverity 
     if (Date.now() - lastAnalysis < cooldown) return;
 
     lastAnalysis = Date.now();
-    await triggerAnalysis(buffer.slice(-ctxLines), [line], slackUrl);
+    await triggerAnalysis(buffer.slice(-ctxLines), [line], slackUrl, shouldRedact);
   };
 
   const handleChunk = (chunk) => {
@@ -243,7 +249,7 @@ async function watchCommand(source, { cooldown, ctxLines, slackUrl, minSeverity 
 
 // ── Shared analysis trigger ──────────────────────────────────────────────────
 
-async function triggerAnalysis(contextBuffer, errorLines, slackUrl) {
+async function triggerAnalysis(contextBuffer, errorLines, slackUrl, shouldRedact = false) {
   const topSev = errorLines.reduce((max, l) => {
     const s = classifySeverity(l);
     return SEV_RANK[s] > SEV_RANK[max] ? s : max;
@@ -257,7 +263,19 @@ async function triggerAnalysis(contextBuffer, errorLines, slackUrl) {
   });
   console.log('');
 
-  const context = contextBuffer.join('\n');
+  let context = contextBuffer.join('\n');
+
+  const warnings = warnIfSensitive(context);
+  if (warnings.length > 0) {
+    warnings.forEach((w) => console.log(chalk.yellow(`  ⚠  ${w}`)));
+    console.log(chalk.dim('     Use --redact to scrub sensitive values before sending to AI.\n'));
+  }
+  if (shouldRedact) {
+    const { redacted, count, types } = redactText(context);
+    context = redacted;
+    if (count > 0) console.log(chalk.green(`  ✓ Redacted ${count} sensitive pattern type(s): ${types.join(', ')}\n`));
+  }
+
   const spinner = ora({ text: 'Analyzing...', color: 'cyan' }).start();
 
   try {

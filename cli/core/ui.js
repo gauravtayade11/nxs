@@ -15,6 +15,7 @@ export function providerInfo() {
 }
 
 export function printBanner(subtitle = 'Multi-tool DevOps & Cloud debugger') {
+  if (process.env.NO_COLOR || chalk.level === 0) return;
   const p = providerInfo();
   console.log('\n' + chalk.dim('╔' + '═'.repeat(58) + '╗'));
   console.log(chalk.dim('║') + ' '.repeat(58) + chalk.dim('║'));

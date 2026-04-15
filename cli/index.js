@@ -1,5 +1,7 @@
 #!/usr/bin/env node
-import { resolve } from 'node:path';
+import { resolve, dirname } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { config }  from 'dotenv';
 import { Command } from 'commander';
 import chalk from 'chalk';
@@ -33,7 +35,20 @@ const program = new Command();
 program
   .name('nxs')
   .description('NextSight — multi-tool DevOps & Cloud debugger')
-  .version(VERSION, '-v, --version');
+  .version(VERSION, '-v, --version')
+  .option('--no-color',          'Disable color output (also: NO_COLOR env var)')
+  .option('--no-cache',          'Bypass the AI response cache for a fresh result')
+  .option('--debug',             'Show provider, latency, cache hit, and prompt size')
+  .option('--fail-on <severity>', 'Exit 1 if result severity meets threshold: critical|warning|info');
+
+// Apply global options before any command action runs
+program.hook('preAction', () => {
+  const g = program.opts();
+  if (g.color === false || process.env.NO_COLOR) chalk.level = 0;
+  if (g.noCache) process.env.NXS_NO_CACHE = '1';
+  if (g.debug)   process.env.NXS_DEBUG   = '1';
+  if (g.failOn)  process.env.NXS_FAIL_ON = g.failOn;
+});
 
 // ── Register tool modules ──────────────────────────────────────────────────
 
@@ -905,4 +920,61 @@ if (process.argv.slice(2).length === 0) {
   process.exit(0);
 }
 
+// ── Shell completion ──────────────────────────────────────────────────────────
+program
+  .command('completion <shell>')
+  .description('Print shell completion script — source it to enable tab-complete')
+  .addHelpText('after', `
+Shells supported: bash, zsh, fish
+
+Setup:
+  bash:  source <(nxs completion bash)
+         # or persist: nxs completion bash >> ~/.bashrc
+
+  zsh:   source <(nxs completion zsh)
+         # or persist: nxs completion zsh >> ~/.zshrc
+         # or install: nxs completion zsh > "\${fpath[1]}/_nxs"
+
+  fish:  nxs completion fish > ~/.config/fish/completions/nxs.fish`)
+  .action((shell) => {
+    const __dirname = dirname(fileURLToPath(import.meta.url));
+    const supported = ['bash', 'zsh', 'fish'];
+    if (!supported.includes(shell)) {
+      console.error(chalk.red(`  Unsupported shell: ${shell}. Supported: ${supported.join(', ')}`));
+      process.exit(1);
+    }
+    const scriptPath = resolve(__dirname, `../scripts/completion.${shell}`);
+    try {
+      process.stdout.write(readFileSync(scriptPath, 'utf8'));
+    } catch {
+      console.error(chalk.red(`  Completion script not found: ${scriptPath}`));
+      process.exit(1);
+    }
+  });
+
+// ── Startup version check (fire-and-forget, once per hour) ───────────────────
+let _updateAvailable = null;
+
+async function checkForUpdate() {
+  try {
+    const cfg = loadConfig();
+    if (Date.now() - (cfg._lastUpdateCheck ?? 0) < 60 * 60 * 1000) return;
+    const res = await fetch('https://registry.npmjs.org/@nextsight/nxs-cli/latest', {
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!res.ok) return;
+    const { version: latest } = await res.json();
+    cfg._lastUpdateCheck = Date.now();
+    saveConfig(cfg);
+    if (latest && latest !== VERSION) _updateAvailable = latest;
+  } catch { /* non-fatal */ }
+}
+
+process.on('exit', () => {
+  if (_updateAvailable) {
+    process.stderr.write(`\n  ${chalk.cyan(`⚡ nxs v${_updateAvailable} available`)}  ${chalk.dim('npm i -g @nextsight/nxs-cli')}\n\n`);
+  }
+});
+
+checkForUpdate();
 program.parse();

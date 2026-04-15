@@ -1,0 +1,39 @@
+name: Feature Request
+description: Suggest a new command or improvement
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have an idea? We'd love to hear it.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem you're trying to solve
+      placeholder: "e.g. I often need to check X but nxs doesn't support it"
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution / command
+      placeholder: "e.g. nxs k8s events --namespace prod"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      options:
+        - Kubernetes
+        - CI/CD
+        - Security
+        - Cloud (AWS/GCP/Azure)
+        - Observability
+        - Incident response
+        - Other
+    validations:
+      required: true
